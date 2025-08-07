@@ -85,7 +85,7 @@ const delugeActionSchema = new Schema({
   },
   label: {
     type: String,
-    required: function(this: any) {
+    required: function(this: { action: string }) {
       return this.action === 'set_label';
     },
     trim: true,
@@ -114,7 +114,6 @@ const syncJobSchema = new Schema<ISyncJob>({
   name: {
     type: String,
     required: [true, 'Sync job name is required'],
-    unique: true,
     trim: true,
     maxlength: [100, 'Sync job name cannot exceed 100 characters'],
     validate: {
@@ -213,7 +212,7 @@ const syncJobSchema = new Schema<ISyncJob>({
   timestamps: true,
   toJSON: {
     virtuals: true,
-    transform: function(doc, ret: any) {
+    transform: function(doc, ret: Record<string, unknown>) {
       delete ret.__v;
       return ret;
     }

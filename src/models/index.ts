@@ -88,8 +88,8 @@ export const validateModelRelationships = async (): Promise<{ valid: boolean; er
   }
 };
 
-// Default export with all models
-export default {
+// Models collection
+const models = {
   ServerProfile,
   SyncJob,
   FileState,
@@ -97,3 +97,6 @@ export default {
   getModelStats,
   validateModelRelationships
 };
+
+// Default export with all models
+export default models;

@@ -8,6 +8,7 @@ import connectDB from '@/lib/mongodb';
 import { withErrorHandler } from '@/lib/errors';
 import { getRequestLogger, PerformanceTimer } from '@/lib/logger/request';
 import { Types } from 'mongoose';
+import { FileScanner } from '@/lib/scanner/file-scanner';
 
 interface RouteParams {
   params: {
@@ -59,30 +60,81 @@ export const POST = withErrorHandler(async (req: NextRequest, { params }: RouteP
     }, { status: 400 });
   }
   
-  // Update last scan time
+  // Update last scan time and perform the actual scan
   syncJob.lastScan = new Date();
   await syncJob.save();
-  
-  // TODO: In a real implementation, this would trigger the actual scan process
-  // For now, we'll simulate the scan operation
-  const scanResult = {
-    jobId: id,
-    jobName: syncJob.name,
-    remotePath: syncJob.remotePath,
-    localPath: syncJob.localPath,
-    scanStarted: new Date().toISOString(),
-    status: 'initiated',
-    message: 'Directory scan has been queued for processing'
-  };
-  
-    logger.info('Manual scan triggered successfully', {
-    jobId: id,
-    duration: timer.end()
-  });
-  
-  return NextResponse.json({
-    success: true,
-    data: scanResult,
-    timestamp: new Date().toISOString()
-  });
+
+  // Perform the actual file scan using our FileScanner
+  try {
+    const fileScanner = new FileScanner();
+    
+    // Get server profile for SSH connection
+    const serverProfile = syncJob.serverProfileId;
+    if (!serverProfile) {
+      return NextResponse.json({
+        success: false,
+        error: 'Server profile not found for sync job',
+        timestamp: new Date().toISOString()
+      }, { status: 400 });
+    }
+
+    // Start the scan asynchronously
+    const scanPromise = fileScanner.compareDirectories(
+      syncJob._id.toString(),
+      {
+        id: `${serverProfile._id}`,
+        name: serverProfile.name,
+        host: serverProfile.address,
+        port: serverProfile.port,
+        username: serverProfile.user,
+        ...(serverProfile.authMethod === 'password' 
+          ? { password: serverProfile.password }
+          : { privateKey: serverProfile.privateKey }
+        )
+      },
+      syncJob.remotePath,
+      syncJob.localPath
+    );
+
+    // Don't await the scan - let it run in background
+    scanPromise.catch((error: unknown) => {
+      logger.error('Background scan failed', {
+        jobId: id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+
+    const scanResult = {
+      jobId: id,
+      jobName: syncJob.name,
+      remotePath: syncJob.remotePath,
+      localPath: syncJob.localPath,
+      scanStarted: new Date().toISOString(),
+      status: 'initiated',
+      message: 'Directory scan has been started in background'
+    };
+
+    logger.info('File scan initiated successfully', {
+      jobId: id,
+      duration: timer.end()
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: scanResult,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error: unknown) {
+    logger.error('Failed to initiate scan', {
+      jobId: id,
+      error: error instanceof Error ? error.message : String(error)
+    });
+
+    return NextResponse.json({
+      success: false,
+      error: 'Failed to initiate directory scan',
+      timestamp: new Date().toISOString()
+    }, { status: 500 });
+  }
 });

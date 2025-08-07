@@ -1,16 +1,29 @@
 import pino from 'pino';
 
-// Create transport for pretty printing in development
-const transport = pino.transport({
-  target: 'pino-pretty',
-  options: {
-    colorize: process.env.NODE_ENV === 'development',
-    translateTime: 'UTC:yyyy-mm-dd HH:MM:ss.l o',
-    ignore: 'pid,hostname',
-    singleLine: false,
-    hideObject: false
+// Create transport conditionally to avoid worker thread issues in Next.js
+let transport;
+
+// Only use pino-pretty transport in pure Node.js environment (not Next.js)
+if (process.env.NODE_ENV === 'development' && !process.env.NEXT_RUNTIME) {
+  try {
+    transport = pino.transport({
+      target: 'pino-pretty',
+      options: {
+        colorize: true,
+        translateTime: 'UTC:yyyy-mm-dd HH:MM:ss.l o',
+        ignore: 'pid,hostname',
+        singleLine: false,
+        hideObject: false
+      }
+    });
+  } catch (error) {
+    // Fallback to stdout if transport fails
+    transport = process.stdout;
   }
-});
+} else {
+  // Use stdout for Next.js runtime to avoid worker thread issues
+  transport = process.stdout;
+}
 
 // Base logger configuration
 export const logger = pino({

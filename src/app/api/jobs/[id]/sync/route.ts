@@ -9,6 +9,8 @@ import { withErrorHandler } from '@/lib/errors';
 import { getRequestLogger, PerformanceTimer } from '@/lib/logger/request';
 import { Types } from 'mongoose';
 import { z } from 'zod';
+import { TransferQueue } from '@/lib/queue/transfer-queue';
+import { TransferType, TransferPriority } from '@/lib/queue/types';
 
 interface RouteParams {
   params: {
@@ -73,7 +75,7 @@ export const POST = withErrorHandler(async (req: NextRequest, { params }: RouteP
   }
   
   // Build filter for files to sync
-  let fileFilter: any = { jobId: id };
+  const fileFilter: Record<string, unknown> = { jobId: id };
   
   switch (options.syncType) {
     case 'all':
@@ -105,22 +107,70 @@ export const POST = withErrorHandler(async (req: NextRequest, { params }: RouteP
     }, { status: 400 });
   }
   
-  // If not a dry run, update file states to 'transferring'
+  // If not a dry run, start the actual transfer process
   if (!options.dryRun) {
-    await FileState.updateMany(
-      fileFilter,
-      { 
-        syncState: 'transferring',
-        'transfer.progress': 0,
-        'transfer.speed': '',
-        'transfer.eta': '',
-        'transfer.errorMessage': null
+    try {
+      // Initialize transfer queue
+      const transferQueue = new TransferQueue();
+      
+      // Get server profile for SSH connection
+      const serverProfile = syncJob.serverProfileId;
+      if (!serverProfile) {
+        return NextResponse.json({
+          success: false,
+          error: 'Server profile not found for sync job',
+          timestamp: new Date().toISOString()
+        }, { status: 400 });
       }
-    );
+
+      // Build SSH config
+      const serverAuth = serverProfile.authMethod === 'password' 
+        ? { password: serverProfile.password }
+        : { privateKey: serverProfile.privateKey };
+
+      // Enqueue files for transfer
+      for (const file of filesToSync) {
+        const fileDoc = file as unknown as { _id: { toString(): string }; filename: string; relativePath: string; remote?: { size?: number } };
+        await transferQueue.addTransfer({
+          jobId: syncJob._id.toString(),
+          fileId: fileDoc._id.toString(),
+          type: TransferType.DOWNLOAD,
+          priority: TransferPriority.NORMAL,
+          source: syncJob.remotePath + '/' + fileDoc.relativePath,
+          destination: syncJob.localPath + '/' + fileDoc.relativePath,
+          filename: fileDoc.filename,
+          relativePath: fileDoc.relativePath,
+          size: fileDoc.remote?.size || 0,
+          sshConfig: {
+            host: serverProfile.address,
+            port: serverProfile.port,
+            username: serverProfile.user,
+            ...serverAuth
+          },
+          maxRetries: 3
+        });
+      }
+
+      logger.info('Files enqueued for transfer', {
+        jobId: id,
+        fileCount: filesToSync.length
+      });
+
+    } catch (error: unknown) {
+      logger.error('Failed to enqueue files for transfer', {
+        jobId: id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+
+      return NextResponse.json({
+        success: false,
+        error: 'Failed to initiate file transfers',
+        timestamp: new Date().toISOString()
+      }, { status: 500 });
+    }
   }
   
-  // TODO: In a real implementation, this would trigger the actual sync process
-  // For now, we'll simulate the sync operation
+  // Return sync operation result
   const syncResult = {
     jobId: id,
     jobName: syncJob.name,
@@ -129,16 +179,20 @@ export const POST = withErrorHandler(async (req: NextRequest, { params }: RouteP
     syncStarted: new Date().toISOString(),
     options,
     filesToSync: filesToSync.length,
-    status: options.dryRun ? 'dry-run-complete' : 'initiated',
+    status: options.dryRun ? 'dry-run-complete' : 'queued',
     message: options.dryRun 
       ? `Dry run complete: ${filesToSync.length} files would be synced`
-      : `Sync operation initiated for ${filesToSync.length} files`
+      : `${filesToSync.length} files added to transfer queue`
   };
   
   logger.info('Manual sync triggered successfully', {
     jobId: id,
+    fileCount: filesToSync.length,
+    dryRun: options.dryRun,
     duration: timer.end()
-  });  return NextResponse.json({
+  });
+  
+  return NextResponse.json({
     success: true,
     data: syncResult,
     timestamp: new Date().toISOString()

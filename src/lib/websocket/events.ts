@@ -61,7 +61,7 @@ export interface SocketEvents {
     serverId?: string;
     type: 'connection' | 'transfer' | 'scan' | 'validation';
     message: string;
-    details?: any;
+    details?: Record<string, unknown>;
     timestamp: string;
   };
 }

@@ -59,7 +59,6 @@ const serverProfileSchema = new Schema<IServerProfile>({
   name: {
     type: String,
     required: [true, 'Server profile name is required'],
-    unique: true,
     trim: true,
     maxlength: [100, 'Server profile name cannot exceed 100 characters'],
     validate: {
@@ -123,7 +122,7 @@ const serverProfileSchema = new Schema<IServerProfile>({
 }, {
   timestamps: true,
   toJSON: {
-    transform: function(doc, ret: any) {
+    transform: function(doc, ret: Record<string, unknown>) {
       delete ret.__v;
       return ret;
     }
@@ -136,30 +135,35 @@ serverProfileSchema.index({ address: 1, port: 1 });
 
 // Instance method: Test SSH connection
 serverProfileSchema.methods.testConnection = async function(this: IServerProfile): Promise<boolean> {
-  // Note: This is a placeholder implementation
-  // In a real implementation, this would use SSH2 or similar library to test connectivity
   try {
-    // Simulate connection test
-    console.log(`Testing connection to ${this.user}@${this.address}:${this.port}`);
+    // Dynamically import SSH connection manager to avoid bundling on client side
+    const { SSHConnectionManager } = await import('../lib/ssh/ssh-connection');
     
-    // Basic validation checks
-    if (!this.address || !this.user || !this.port) {
-      return false;
-    }
+    // Create SSH connection manager instance
+    const sshManager = new SSHConnectionManager();
     
-    if (this.authMethod === 'password' && !this.password) {
-      return false;
-    }
+    // Build SSH config from this server profile
+    const config = {
+      id: `test-${this._id}`,
+      name: `Test connection for ${this.name}`,
+      host: this.address,
+      port: this.port,
+      username: this.user,
+      ...(this.authMethod === 'password' 
+        ? { password: this.password }
+        : { privateKey: this.privateKey }
+      )
+    };
     
-    if (this.authMethod === 'key' && !this.privateKey) {
-      return false;
-    }
+    // Test the connection
+    const result = await sshManager.testConnection(config);
     
-    // TODO: Implement actual SSH connection test using ssh2 library
-    // For now, return true for valid configurations
-    return true;
+    // Cleanup
+    await sshManager.cleanup();
+    
+    return result.success;
   } catch (error) {
-    console.error('Connection test failed:', error);
+    console.error(`SSH connection test failed for ${this.user}@${this.address}:${this.port}:`, error);
     return false;
   }
 };

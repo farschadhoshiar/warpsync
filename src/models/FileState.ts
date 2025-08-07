@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema, Model, Types } from 'mongoose';
+import { FileStateType } from '../lib/websocket/events';
 
 // TypeScript interface for FileState
 export interface IFileState extends Document {
@@ -37,9 +38,21 @@ export interface IFileState extends Document {
   failTransfer(error: string): void;
 }
 
+// Filter interface for findByJob method
+interface FileStateFilters {
+  syncState?: FileStateType | FileStateType[];
+  filename?: string;
+  addedAfter?: string | Date;
+  addedBefore?: string | Date;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  limit?: string | number;
+  skip?: string | number;
+}
+
 // Static methods interface
 export interface IFileStateModel extends Model<IFileState> {
-  findByJob(jobId: string | Types.ObjectId, filters?: any): Promise<IFileState[]>;
+  findByJob(jobId: string | Types.ObjectId, filters?: FileStateFilters): Promise<IFileState[]>;
   findQueuedFiles(): Promise<IFileState[]>;
   findTransferringFiles(): Promise<IFileState[]>;
 }
@@ -197,7 +210,7 @@ const fileStateSchema = new Schema<IFileState>({
 }, {
   timestamps: false, // We manage our own timestamps
   toJSON: {
-    transform: function(doc, ret: any) {
+    transform: function(doc, ret: Record<string, unknown>) {
       delete ret.__v;
       return ret;
     }
@@ -307,9 +320,9 @@ fileStateSchema.methods.failTransfer = function(this: IFileState, error: string)
 // Static method: Find files by job with optional filters
 fileStateSchema.statics.findByJob = function(
   jobId: string | Types.ObjectId, 
-  filters: any = {}
+  filters: FileStateFilters = {}
 ): Promise<IFileState[]> {
-  const query: any = { jobId };
+  const query: Record<string, unknown> = { jobId };
   
   // Add sync state filter
   if (filters.syncState) {
@@ -331,7 +344,8 @@ fileStateSchema.statics.findByJob = function(
   }
   
   if (filters.addedBefore) {
-    query.addedAt = { ...query.addedAt, $lte: new Date(filters.addedBefore) };
+    const existingDate = query.addedAt as Record<string, unknown> || {};
+    query.addedAt = { ...existingDate, $lte: new Date(filters.addedBefore) };
   }
   
   let queryBuilder = this.find(query);
@@ -346,11 +360,13 @@ fileStateSchema.statics.findByJob = function(
   
   // Add pagination
   if (filters.limit) {
-    queryBuilder = queryBuilder.limit(parseInt(filters.limit));
+    const limitNum = typeof filters.limit === 'string' ? parseInt(filters.limit) : filters.limit;
+    queryBuilder = queryBuilder.limit(limitNum);
   }
   
   if (filters.skip) {
-    queryBuilder = queryBuilder.skip(parseInt(filters.skip));
+    const skipNum = typeof filters.skip === 'string' ? parseInt(filters.skip) : filters.skip;
+    queryBuilder = queryBuilder.skip(skipNum);
   }
   
   return queryBuilder.exec();
