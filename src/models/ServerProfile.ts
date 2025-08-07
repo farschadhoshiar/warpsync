@@ -123,7 +123,7 @@ const serverProfileSchema = new Schema<IServerProfile>({
 }, {
   timestamps: true,
   toJSON: {
-    transform: function(doc, ret) {
+    transform: function(doc, ret: any) {
       delete ret.__v;
       return ret;
     }

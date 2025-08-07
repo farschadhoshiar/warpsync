@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "outDir": ".next/standalone"
+  },
+  "include": ["src/server.ts"],
+  "exclude": ["src/app/**/*"]
+}

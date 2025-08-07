@@ -60,7 +60,7 @@ async function connectDB() {
       family: 4 // Use IPv4, skip trying IPv6
     };
 
-    cached!.promise = mongoose.connect(MONGODB_URI, opts).then(async (mongoose) => {
+    cached!.promise = mongoose.connect(MONGODB_URI, opts).then(async (mongooseInstance) => {
       console.log('✅ Connected to MongoDB');
       
       // Import and register models on connection
@@ -73,7 +73,7 @@ async function connectDB() {
         console.warn('⚠️ Error registering models:', modelError);
       }
       
-      return mongoose;
+      return cached;
     });
   }
 

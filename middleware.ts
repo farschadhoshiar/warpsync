@@ -23,7 +23,7 @@ export function middleware(request: NextRequest) {
   // Handle CORS for API routes
   if (pathname.startsWith('/api/')) {
     const origin = request.headers.get('origin');
-    const corsHeaders = getCorsHeaders(origin);
+    const corsHeaders = getCorsHeaders(origin || undefined);
     
     Object.entries(corsHeaders).forEach(([key, value]) => {
       response.headers.set(key, value);

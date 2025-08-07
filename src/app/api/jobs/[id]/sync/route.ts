@@ -29,8 +29,8 @@ const SyncOptionsSchema = z.object({
  * Trigger a manual sync operation for a sync job
  */
 export const POST = withErrorHandler(async (req: NextRequest, { params }: RouteParams) => {
-  const timer = new PerformanceTimer();
-  const logger = getRequestLogger(req);
+  const logger = await getRequestLogger();
+  const timer = new PerformanceTimer(logger, 'manual-sync');
   
   const { id } = params;
   
@@ -137,14 +137,8 @@ export const POST = withErrorHandler(async (req: NextRequest, { params }: RouteP
   
   logger.info('Manual sync triggered successfully', {
     jobId: id,
-    jobName: syncJob.name,
-    filesToSync: filesToSync.length,
-    syncType: options.syncType,
-    dryRun: options.dryRun,
-    duration: timer.getDuration()
-  });
-  
-  return NextResponse.json({
+    duration: timer.end()
+  });  return NextResponse.json({
     success: true,
     data: syncResult,
     timestamp: new Date().toISOString()

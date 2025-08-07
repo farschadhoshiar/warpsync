@@ -197,7 +197,7 @@ const fileStateSchema = new Schema<IFileState>({
 }, {
   timestamps: false, // We manage our own timestamps
   toJSON: {
-    transform: function(doc, ret) {
+    transform: function(doc, ret: any) {
       delete ret.__v;
       return ret;
     }

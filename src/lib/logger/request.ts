@@ -65,6 +65,10 @@ export class PerformanceTimer {
     return duration;
   }
   
+  getDuration(): number {
+    return Math.round(performance.now() - this.startTime);
+  }
+  
   endWithError(error: any, additionalData?: any): number {
     const duration = Math.round(performance.now() - this.startTime);
     

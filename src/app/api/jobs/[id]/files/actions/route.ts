@@ -23,7 +23,7 @@ const BulkFileActionSchema = z.object({
   options: z.object({
     force: z.boolean().optional().default(false),
     skipConfirmation: z.boolean().optional().default(false)
-  }).optional().default({})
+  }).optional()
 });
 
 /**
@@ -31,8 +31,8 @@ const BulkFileActionSchema = z.object({
  * Perform bulk actions on multiple files
  */
 export const POST = withErrorHandler(async (req: NextRequest, { params }: RouteParams) => {
-  const timer = new PerformanceTimer();
-  const logger = getRequestLogger(req);
+  const logger = await getRequestLogger();
+  const timer = new PerformanceTimer(logger, 'bulk-file-action');
   
   const { jobId } = params;
   
@@ -177,12 +177,11 @@ export const POST = withErrorHandler(async (req: NextRequest, { params }: RouteP
     options
   };
   
-  logger.info('Bulk file action completed', {
+    logger.info('Bulk file action completed', {
     jobId,
     action,
-    filesProcessed: result.filesProcessed,
-    totalRequested: fileIds.length,
-    duration: timer.getDuration()
+    processedFiles: fileIds.length,
+    duration: timer.end()
   });
   
   return NextResponse.json({

@@ -21,8 +21,8 @@ interface RouteParams {
  * Retrieve a specific sync job by ID
  */
 export const GET = withErrorHandler(async (req: NextRequest, { params }: RouteParams) => {
-  const timer = new PerformanceTimer();
-  const logger = getRequestLogger(req);
+  const logger = await getRequestLogger();
+  const timer = new PerformanceTimer(logger, 'get-sync-job');
   
   const { id } = params;
   
@@ -55,8 +55,7 @@ export const GET = withErrorHandler(async (req: NextRequest, { params }: RoutePa
   
   logger.info('Sync job retrieved successfully', {
     jobId: id,
-    name: syncJob.name,
-    duration: timer.getDuration()
+    duration: timer.end()
   });
   
   return NextResponse.json({
@@ -71,8 +70,8 @@ export const GET = withErrorHandler(async (req: NextRequest, { params }: RoutePa
  * Update a specific sync job
  */
 export const PUT = withErrorHandler(async (req: NextRequest, { params }: RouteParams) => {
-  const timer = new PerformanceTimer();
-  const logger = getRequestLogger(req);
+  const logger = await getRequestLogger();
+  const timer = new PerformanceTimer(logger, 'update-sync-job');
   
   const { id } = params;
   
@@ -149,9 +148,8 @@ export const PUT = withErrorHandler(async (req: NextRequest, { params }: RoutePa
   
   logger.info('Sync job updated successfully', {
     jobId: id,
-    name: updatedJob.name,
     updatedFields: Object.keys(updateData),
-    duration: timer.getDuration()
+    duration: timer.end()
   });
   
   return NextResponse.json({
@@ -166,8 +164,8 @@ export const PUT = withErrorHandler(async (req: NextRequest, { params }: RoutePa
  * Delete a specific sync job
  */
 export const DELETE = withErrorHandler(async (req: NextRequest, { params }: RouteParams) => {
-  const timer = new PerformanceTimer();
-  const logger = getRequestLogger(req);
+  const logger = await getRequestLogger();
+  const timer = new PerformanceTimer(logger, 'delete-sync-job');
   
   const { id } = params;
   
@@ -203,12 +201,8 @@ export const DELETE = withErrorHandler(async (req: NextRequest, { params }: Rout
   
   logger.info('Sync job deleted successfully', {
     jobId: id,
-    name: syncJob.name,
-    deletedFileStates: deletedFileStates.deletedCount,
-    duration: timer.getDuration()
-  });
-  
-  return NextResponse.json({
+    duration: timer.end()
+  });  return NextResponse.json({
     success: true,
     message: 'Sync job deleted successfully',
     data: {

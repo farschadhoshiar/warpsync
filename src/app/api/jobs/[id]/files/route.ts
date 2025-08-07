@@ -21,8 +21,8 @@ interface RouteParams {
  * Retrieve file states for a sync job with filtering and pagination
  */
 export const GET = withErrorHandler(async (req: NextRequest, { params }: RouteParams) => {
-  const timer = new PerformanceTimer();
-  const logger = getRequestLogger(req);
+  const logger = await getRequestLogger();
+  const timer = new PerformanceTimer(logger, 'get-file-states');
   
   const { jobId } = params;
   
@@ -120,13 +120,10 @@ export const GET = withErrorHandler(async (req: NextRequest, { params }: RoutePa
     return acc;
   }, {} as Record<string, number>);
   
-  logger.info(`Retrieved ${files.length} file states`, {
+    logger.info(`Retrieved ${files.length} file states`, {
     jobId,
-    page,
-    limit,
-    total,
-    totalPages,
-    duration: timer.getDuration()
+    filesCount: files.length,
+    duration: timer.end()
   });
   
   return NextResponse.json({

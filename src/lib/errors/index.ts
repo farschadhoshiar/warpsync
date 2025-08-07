@@ -91,7 +91,7 @@ export function handleApiError(error: unknown): NextResponse<ApiErrorResponse> {
       error: {
         code: 'VALIDATION_ERROR',
         message: 'Validation failed',
-        details: error.errors.map(err => ({
+        details: error.issues.map((err: any) => ({
           field: err.path.join('.'),
           message: err.message,
           value: err.input
@@ -261,7 +261,7 @@ export function validateInput<T>(schema: any, input: unknown): T {
     return schema.parse(input);
   } catch (error) {
     if (error instanceof ZodError) {
-      throw new ValidationError('Validation failed', error.errors);
+      throw new ValidationError('Validation failed', error.issues);
     }
     throw error;
   }

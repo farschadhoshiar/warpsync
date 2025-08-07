@@ -20,8 +20,8 @@ interface RouteParams {
  * Trigger a manual directory scan for a sync job
  */
 export const POST = withErrorHandler(async (req: NextRequest, { params }: RouteParams) => {
-  const timer = new PerformanceTimer();
-  const logger = getRequestLogger(req);
+  const logger = await getRequestLogger();
+  const timer = new PerformanceTimer(logger, 'manual-scan');
   
   const { id } = params;
   
@@ -75,12 +75,9 @@ export const POST = withErrorHandler(async (req: NextRequest, { params }: RouteP
     message: 'Directory scan has been queued for processing'
   };
   
-  logger.info('Manual scan triggered successfully', {
+    logger.info('Manual scan triggered successfully', {
     jobId: id,
-    jobName: syncJob.name,
-    remotePath: syncJob.remotePath,
-    localPath: syncJob.localPath,
-    duration: timer.getDuration()
+    duration: timer.end()
   });
   
   return NextResponse.json({

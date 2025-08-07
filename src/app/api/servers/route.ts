@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createSuccessResponse, withErrorHandler, validateInput } from '@/lib/errors';
 import connectDB from '@/lib/mongodb';
 import { ServerProfileCreateSchema, ServerFilterSchema } from '@/lib/validation/schemas';
@@ -20,12 +21,12 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       // Parse and validate query parameters
       const { searchParams } = request.nextUrl;
       const queryParams = Object.fromEntries(searchParams.entries());
-      const filters = validateInput(ServerFilterSchema, queryParams);
+      const filters = validateInput<z.infer<typeof ServerFilterSchema>>(ServerFilterSchema, queryParams);
       
       logger.info({ filters }, 'listing server profiles');
       
       // Build query
-      const query: any = {};
+      const query: Record<string, RegExp | boolean | number> = {};
       
       if (filters.name) {
         query.name = new RegExp(filters.name, 'i');
@@ -102,7 +103,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       
       // Parse and validate request body
       const body = await request.json();
-      const validatedData = validateInput(ServerProfileCreateSchema, body);
+      const validatedData = validateInput<z.infer<typeof ServerProfileCreateSchema>>(ServerProfileCreateSchema, body);
       
       logger.info({ serverName: validatedData.name }, 'creating new server profile');
       

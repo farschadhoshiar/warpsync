@@ -25,9 +25,7 @@ export const ServerProfileCreateSchema = z.object({
     .min(1, 'Username is required')
     .max(50, 'Username cannot exceed 50 characters'),
   
-  authMethod: z.enum(['password', 'key'], {
-    errorMap: () => ({ message: 'Authentication method must be either "password" or "key"' })
-  }),
+  authMethod: z.enum(['password', 'key']),
   
   password: z.string().optional(),
   
@@ -107,12 +105,10 @@ export const SyncJobCreateSchema = z.object({
     enabled: z.boolean().default(false),
     patterns: z.array(z.string().min(1, 'Pattern cannot be empty')).default([]),
     excludePatterns: z.array(z.string()).default([])
-  }).default({}),
+  }).optional(),
   
   delugeAction: z.object({
-    action: z.enum(['none', 'remove', 'remove_data', 'set_label'], {
-      errorMap: () => ({ message: 'Action must be one of: none, remove, remove_data, set_label' })
-    }).default('none'),
+    action: z.enum(['none', 'remove', 'remove_data', 'set_label']).default('none'),
     delay: z.number()
       .int('Delay must be an integer')
       .min(0, 'Delay must be 0 or greater')
@@ -121,7 +117,8 @@ export const SyncJobCreateSchema = z.object({
     label: z.string()
       .max(50, 'Label cannot exceed 50 characters')
       .optional()
-  }).default({}).refine((data) => {
+  }).optional().refine((data) => {
+    if (!data) return true;
     if (data.action === 'set_label' && !data.label) {
       return false;
     }
@@ -142,16 +139,14 @@ export const SyncJobCreateSchema = z.object({
       .min(1, 'Max connections per transfer must be at least 1')
       .max(20, 'Max connections per transfer cannot exceed 20')
       .default(5)
-  }).default({})
+  }).optional()
 });
 
 export const SyncJobUpdateSchema = SyncJobCreateSchema.partial();
 
 // FileState validation schemas
 export const FileStateActionSchema = z.object({
-  action: z.enum(['queue', 'deleteLocal', 'deleteRemote', 'deleteEverywhere'], {
-    errorMap: () => ({ message: 'Action must be one of: queue, deleteLocal, deleteRemote, deleteEverywhere' })
-  }),
+  action: z.enum(['queue', 'deleteLocal', 'deleteRemote', 'deleteEverywhere']),
   fileIds: z.array(z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid file ID format'))
     .min(1, 'At least one file ID is required')
     .max(100, 'Cannot process more than 100 files at once')
@@ -163,12 +158,12 @@ export const PaginationSchema = z.object({
     .regex(/^\d+$/, 'Page must be a positive integer')
     .transform(Number)
     .refine(n => n >= 1, 'Page must be at least 1')
-    .default('1'),
+    .default(1),
   limit: z.string()
     .regex(/^\d+$/, 'Limit must be a positive integer')
     .transform(Number)
     .refine(n => n >= 1 && n <= 100, 'Limit must be between 1 and 100')
-    .default('20')
+    .default(20)
 });
 
 export const FileFilterSchema = z.object({
@@ -176,6 +171,9 @@ export const FileFilterSchema = z.object({
     .or(z.array(z.enum(['synced', 'remote_only', 'local_only', 'desynced', 'queued', 'transferring', 'failed'])))
     .optional(),
   filename: z.string().optional(),
+  search: z.string().optional(),
+  minSize: z.string().regex(/^\d+$/, 'Min size must be a positive integer').transform(Number).optional(),
+  maxSize: z.string().regex(/^\d+$/, 'Max size must be a positive integer').transform(Number).optional(),
   addedAfter: z.string().datetime().optional(),
   addedBefore: z.string().datetime().optional(),
   sortBy: z.enum(['relativePath', 'filename', 'addedAt', 'lastSeen', 'remote.size']).default('relativePath'),
@@ -195,6 +193,7 @@ export const ServerFilterSchema = z.object({
 
 export const JobFilterSchema = z.object({
   name: z.string().optional(),
+  search: z.string().optional(),
   enabled: z.string()
     .regex(/^(true|false)$/, 'Enabled must be true or false')
     .transform(value => value === 'true')

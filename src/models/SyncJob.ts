@@ -213,7 +213,7 @@ const syncJobSchema = new Schema<ISyncJob>({
   timestamps: true,
   toJSON: {
     virtuals: true,
-    transform: function(doc, ret) {
+    transform: function(doc, ret: any) {
       delete ret.__v;
       return ret;
     }

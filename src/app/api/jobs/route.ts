@@ -14,8 +14,8 @@ import { SyncJobCreateSchema, SyncJobUpdateSchema, JobFilterSchema } from '@/lib
  * Retrieve sync jobs with optional filtering, pagination, and sorting
  */
 export const GET = withErrorHandler(async (req: NextRequest) => {
-  const timer = new PerformanceTimer();
-  const logger = getRequestLogger(req);
+  const logger = await getRequestLogger();
+  const timer = new PerformanceTimer(logger, 'get-sync-jobs');
   
   logger.info('Fetching sync jobs');
   
@@ -64,12 +64,9 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
   
   const totalPages = Math.ceil(total / limit);
   
-  logger.info(`Retrieved ${jobs.length} sync jobs`, {
-    page,
-    limit,
-    total,
-    totalPages,
-    duration: timer.getDuration()
+    logger.info(`Retrieved ${jobs.length} sync jobs`, {
+    jobsCount: jobs.length,
+    duration: timer.end()
   });
   
   return NextResponse.json({
@@ -92,8 +89,8 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
  * Create a new sync job
  */
 export const POST = withErrorHandler(async (req: NextRequest) => {
-  const timer = new PerformanceTimer();
-  const logger = getRequestLogger(req);
+  const logger = await getRequestLogger();
+  const timer = new PerformanceTimer(logger, 'create-sync-job');
   
   logger.info('Creating new sync job');
   
@@ -142,8 +139,7 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   
   logger.info('Sync job created successfully', {
     jobId: syncJob._id,
-    name: syncJob.name,
-    duration: timer.getDuration()
+    duration: timer.end()
   });
   
   return NextResponse.json({
