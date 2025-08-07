@@ -247,10 +247,8 @@ export class SSHConnectionManager {
   }
 
   private getConnectionById(connectionId: string): Client | null {
-    // This is a simplified version - in the real implementation,
-    // we'd need to track active connections by ID
-    void connectionId; // TODO: Implement connection tracking
-    return null;
+    const pooledConnection = this.pool.getConnectionById(connectionId);
+    return pooledConnection ? pooledConnection.connection : null;
   }
 
   private parseLsOutput(lsOutput: string, basePath: string): SSHFileInfo[] {

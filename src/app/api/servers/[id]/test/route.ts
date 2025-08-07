@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ServerProfile } from '@/models';
-import { handleApiError, createSuccessResponse, withErrorHandler, validateInput, NotFoundError, ConnectionError } from '@/lib/errors';
+import connectDB from '@/lib/mongodb';
+import { createSuccessResponse, withErrorHandler, validateInput, NotFoundError, ConnectionError } from '@/lib/errors';
 import { ConnectionTestSchema } from '@/lib/validation/schemas';
 
-import { getRequestLogger, PerformanceTimer, logDatabaseOperation } from '@/lib/logger/request';
+import { getRequestLogger, PerformanceTimer } from '@/lib/logger/request';
 
 // POST /api/servers/[id]/test - Test SSH connection to server
 export const POST = withErrorHandler(async (request: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
@@ -16,9 +16,13 @@ export const POST = withErrorHandler(async (request: NextRequest, { params }: { 
       // Parse and validate request body (optional timeout parameter)
       const body = await request.json().catch(() => ({}));
       const validatedData = validateInput(ConnectionTestSchema, body);
-      const { timeout } = validatedData;
+      const { timeout } = validatedData as { timeout?: number };
       
       logger.info({ serverId: id, timeout }, 'testing server connection');
+      
+      // Connect to database
+      await connectDB();
+      const { ServerProfile } = await import('@/models');
       
       // Find server profile
       const dbTimer = new PerformanceTimer(logger, 'database_findById');

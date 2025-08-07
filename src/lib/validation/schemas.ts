@@ -55,11 +55,14 @@ export const ServerProfileCreateSchema = z.object({
 });
 
 export const ServerProfileUpdateSchema = ServerProfileCreateSchema.partial().refine((data) => {
-  if (data.authMethod === 'password' && !data.password) {
-    return false;
-  }
-  if (data.authMethod === 'key' && !data.privateKey) {
-    return false;
+  // Only validate auth credentials if authMethod is being updated
+  if (data.authMethod) {
+    if (data.authMethod === 'password' && !data.password) {
+      return false;
+    }
+    if (data.authMethod === 'key' && !data.privateKey) {
+      return false;
+    }
   }
   return true;
 }, {

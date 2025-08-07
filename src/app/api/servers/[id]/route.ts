@@ -11,9 +11,9 @@ import { ServerProfileUpdateSchema } from '@/lib/validation/schemas';
 import { Types } from 'mongoose';
 
 interface RouteParams {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
 }
 
 /**
@@ -24,7 +24,7 @@ export const GET = withErrorHandler(async (req: NextRequest, { params }: RoutePa
   const logger = await getRequestLogger();
   const timer = new PerformanceTimer(logger, 'get_server');
   
-  const { id } = params;
+  const { id } = await params;
   
   // Validate ObjectId
   if (!Types.ObjectId.isValid(id)) {
@@ -76,7 +76,7 @@ export const PUT = withErrorHandler(async (req: NextRequest, { params }: RoutePa
   const logger = await getRequestLogger();
   const timer = new PerformanceTimer(logger, 'update_server');
   
-  const { id } = params;
+  const { id } = await params;
   
   // Validate ObjectId
   if (!Types.ObjectId.isValid(id)) {
@@ -163,7 +163,7 @@ export const DELETE = withErrorHandler(async (req: NextRequest, { params }: Rout
   const logger = await getRequestLogger();
   const timer = new PerformanceTimer(logger, 'delete_server');
   
-  const { id } = params;
+  const { id } = await params;
   
   // Validate ObjectId
   if (!Types.ObjectId.isValid(id)) {

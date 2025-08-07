@@ -107,6 +107,10 @@ export class SSHConnectionPool {
     };
   }
 
+  getConnectionById(connectionId: string): PooledConnection | null {
+    return this.connections.get(connectionId) || null;
+  }
+
   private getPoolKey(config: SSHConnectionConfig): string {
     return `${config.host}:${config.port || 22}:${config.username}`;
   }
@@ -135,6 +139,16 @@ export class SSHConnectionPool {
     const connectionId = `ssh_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const connection = new Client();
     
+    console.log(`=== Creating SSH Connection ${connectionId} ===`);
+    console.log('Connection config:', {
+      host: config.host,
+      port: config.port,
+      username: config.username,
+      hasPassword: !!config.password,
+      hasPrivateKey: !!config.privateKey,
+      connectionTimeout: config.connectionTimeout || 30000
+    });
+    
     const pooledConnection: PooledConnection = {
       id: connectionId,
       connection,
@@ -158,11 +172,13 @@ export class SSHConnectionPool {
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
+        console.log(`SSH connection ${connectionId} timed out`);
         this.connections.delete(connectionId);
         reject(new Error('SSH connection timeout'));
       }, config.connectionTimeout || 30000);
 
       connection.on('ready', () => {
+        console.log(`SSH connection ${connectionId} ready`);
         clearTimeout(timeout);
         pooledConnection.status = ConnectionStatus.CONNECTED;
         pooledConnection.stats.status = ConnectionStatus.CONNECTED;
@@ -179,6 +195,8 @@ export class SSHConnectionPool {
       });
 
       connection.on('error', (error: Error) => {
+        console.log(`SSH connection ${connectionId} error:`, error.message);
+        console.log('Full error details:', error);
         clearTimeout(timeout);
         pooledConnection.status = ConnectionStatus.ERROR;
         pooledConnection.stats.status = ConnectionStatus.ERROR;
@@ -195,6 +213,7 @@ export class SSHConnectionPool {
       });
 
       connection.on('close', () => {
+        console.log(`SSH connection ${connectionId} closed`);
         pooledConnection.status = ConnectionStatus.DISCONNECTED;
         pooledConnection.stats.status = ConnectionStatus.DISCONNECTED;
         pooledConnection.stats.disconnectedAt = new Date();
@@ -205,6 +224,7 @@ export class SSHConnectionPool {
         });
       });
 
+      console.log(`Attempting to connect SSH connection ${connectionId}...`);
       connection.connect(config);
     });
   }

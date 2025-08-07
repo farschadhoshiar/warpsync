@@ -136,6 +136,11 @@ serverProfileSchema.index({ address: 1, port: 1 });
 // Instance method: Test SSH connection
 serverProfileSchema.methods.testConnection = async function(this: IServerProfile): Promise<boolean> {
   try {
+    console.log(`=== SSH Connection Test Debug for ${this.user}@${this.address}:${this.port} ===`);
+    console.log('Auth method:', this.authMethod);
+    console.log('Password provided:', !!this.password);
+    console.log('Private key provided:', !!this.privateKey);
+    
     // Dynamically import SSH connection manager to avoid bundling on client side
     const { SSHConnectionManager } = await import('../lib/ssh/ssh-connection');
     
@@ -155,8 +160,21 @@ serverProfileSchema.methods.testConnection = async function(this: IServerProfile
       )
     };
     
+    console.log('SSH Config created:', {
+      id: config.id,
+      name: config.name,
+      host: config.host,
+      port: config.port,
+      username: config.username,
+      hasPassword: this.authMethod === 'password' && !!this.password,
+      hasPrivateKey: this.authMethod === 'key' && !!this.privateKey
+    });
+    
     // Test the connection
+    console.log('Attempting SSH connection...');
     const result = await sshManager.testConnection(config);
+    
+    console.log('SSH connection test result:', result);
     
     // Cleanup
     await sshManager.cleanup();
@@ -164,6 +182,11 @@ serverProfileSchema.methods.testConnection = async function(this: IServerProfile
     return result.success;
   } catch (error) {
     console.error(`SSH connection test failed for ${this.user}@${this.address}:${this.port}:`, error);
+    console.error('Error details:', {
+      name: error instanceof Error ? error.name : 'Unknown',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : 'No stack trace'
+    });
     return false;
   }
 };
