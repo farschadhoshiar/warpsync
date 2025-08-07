@@ -1,0 +1,39 @@
+# Development Dockerfile with hot reload
+FROM node:20-alpine
+
+# Install system dependencies required for WarpSync
+RUN apk add --no-cache \
+    rsync \
+    openssh-client \
+    bash \
+    curl \
+    git
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Copy package.json and package-lock.json (if available)
+COPY package*.json ./
+
+# Install dependencies (including dev dependencies for development)
+RUN npm install
+
+# Create necessary directories
+RUN mkdir -p /app/data/local /app/data/remote /app/logs
+
+# Create a non-root user for security
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S nextjs -u 1001
+
+# Set ownership of the app directory to the nodejs user
+RUN chown -R nextjs:nodejs /app
+USER nextjs
+
+# Expose the port the app runs on
+EXPOSE 3000
+
+# Define environment variable
+ENV NODE_ENV=development
+
+# Start the development server with hot reload
+CMD ["npm", "run", "dev"]

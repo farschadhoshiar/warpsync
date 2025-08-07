@@ -1,0 +1,57 @@
+# Dependency directories
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Next.js build outputs
+.next
+out
+
+# Environment files
+.env.development
+.env.test
+.env.production
+
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+*.md
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+
+# Logs
+logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage
+
+# nyc test coverage
+.nyc_output
+
+# Dependency lock files (keep package-lock.json for Docker builds)
+yarn.lock
+pnpm-lock.yaml

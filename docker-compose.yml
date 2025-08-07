@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # MongoDB database service
+  mongodb:
+    image: mongo:7
+    container_name: warpsync-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: warpsync
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./docker/mongo-init:/docker-entrypoint-initdb.d
+    networks:
+      - warpsync-network
+
+  # WarpSync application service
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: warpsync-app
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: mongodb://admin:password@mongodb:27017/warpsync?authSource=admin
+      NEXTAUTH_SECRET: your-secret-key-here
+      NEXTAUTH_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount volumes for file synchronization
+      - ./data/local:/app/data/local
+      - ./data/remote:/app/data/remote
+      - ./logs:/app/logs
+    depends_on:
+      - mongodb
+    networks:
+      - warpsync-network
+
+  # Development service with hot reload
+  app-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: warpsync-app-dev
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      MONGODB_URI: mongodb://admin:password@mongodb:27017/warpsync?authSource=admin
+      NEXTAUTH_SECRET: your-secret-key-here
+      NEXTAUTH_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount source code for development hot reload
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+      # Mount volumes for file synchronization
+      - ./data/local:/app/data/local
+      - ./data/remote:/app/data/remote
+      - ./logs:/app/logs
+    depends_on:
+      - mongodb
+    networks:
+      - warpsync-network
+
+volumes:
+  mongodb_data:
+    driver: local
+
+networks:
+  warpsync-network:
+    driver: bridge
