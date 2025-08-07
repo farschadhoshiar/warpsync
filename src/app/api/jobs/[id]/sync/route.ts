@@ -12,12 +12,6 @@ import { z } from 'zod';
 import { TransferQueue } from '@/lib/queue/transfer-queue';
 import { TransferType, TransferPriority } from '@/lib/queue/types';
 
-interface RouteParams {
-  params: {
-    id: string;
-  };
-}
-
 // Schema for sync operation options
 const SyncOptionsSchema = z.object({
   dryRun: z.boolean().optional().default(false),
@@ -30,11 +24,11 @@ const SyncOptionsSchema = z.object({
  * POST /api/jobs/[id]/sync
  * Trigger a manual sync operation for a sync job
  */
-export const POST = withErrorHandler(async (req: NextRequest, { params }: RouteParams) => {
+export const POST = withErrorHandler(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const logger = await getRequestLogger();
   const timer = new PerformanceTimer(logger, 'manual-sync');
   
-  const { id } = params;
+  const { id } = await params;
   
   // Validate ObjectId
   if (!Types.ObjectId.isValid(id)) {

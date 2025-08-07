@@ -7,15 +7,19 @@ export interface IFileState extends Document {
   jobId: Types.ObjectId;
   relativePath: string;
   filename: string;
+  isDirectory: boolean;
+  parentPath: string;
   remote: {
     size?: number;
     modTime?: Date;
     exists: boolean;
+    isDirectory?: boolean;
   };
   local: {
     size?: number;
     modTime?: Date;
     exists: boolean;
+    isDirectory?: boolean;
   };
   syncState: 'synced' | 'remote_only' | 'local_only' | 'desynced' | 'queued' | 'transferring' | 'failed';
   transfer: {
@@ -27,6 +31,8 @@ export interface IFileState extends Document {
     startedAt?: Date;
     completedAt?: Date;
   };
+  directorySize?: number;
+  fileCount?: number;
   lastSeen: Date;
   addedAt: Date;
   
@@ -69,6 +75,10 @@ const remoteMetadataSchema = new Schema({
   exists: {
     type: Boolean,
     default: false
+  },
+  isDirectory: {
+    type: Boolean,
+    default: false
   }
 }, { _id: false });
 
@@ -82,6 +92,10 @@ const localMetadataSchema = new Schema({
     type: Date
   },
   exists: {
+    type: Boolean,
+    default: false
+  },
+  isDirectory: {
     type: Boolean,
     default: false
   }
@@ -168,6 +182,24 @@ const fileStateSchema = new Schema<IFileState>({
     trim: true,
     maxlength: [255, 'Filename cannot exceed 255 characters']
   },
+  isDirectory: {
+    type: Boolean,
+    default: false,
+    required: [true, 'isDirectory flag is required']
+  },
+  parentPath: {
+    type: String,
+    default: '',
+    trim: true,
+    maxlength: [1000, 'Parent path cannot exceed 1000 characters'],
+    validate: {
+      validator: function(path: string) {
+        // Validate parent path (no leading slash, no .. for security)
+        return !path.startsWith('/') && !path.includes('../');
+      },
+      message: 'Parent path must not start with / or contain ../'
+    }
+  },
   remote: {
     type: remoteMetadataSchema,
     default: () => ({
@@ -195,6 +227,30 @@ const fileStateSchema = new Schema<IFileState>({
       progress: 0,
       retryCount: 0
     })
+  },
+  directorySize: {
+    type: Number,
+    min: 0,
+    default: 0,
+    validate: {
+      validator: function(this: IFileState, size: number) {
+        // Only directories should have directory size
+        return !this.isDirectory || size >= 0;
+      },
+      message: 'Directory size must be non-negative for directories'
+    }
+  },
+  fileCount: {
+    type: Number,
+    min: 0,
+    default: 0,
+    validate: {
+      validator: function(this: IFileState, count: number) {
+        // Only directories should have file count
+        return !this.isDirectory || count >= 0;
+      },
+      message: 'File count must be non-negative for directories'
+    }
   },
   lastSeen: {
     type: Date,
@@ -224,6 +280,9 @@ fileStateSchema.index({ syncState: 1 });
 fileStateSchema.index({ lastSeen: 1 });
 fileStateSchema.index({ jobId: 1, syncState: 1 });
 fileStateSchema.index({ syncState: 1, 'transfer.retryCount': 1 });
+fileStateSchema.index({ jobId: 1, isDirectory: 1 });
+fileStateSchema.index({ jobId: 1, parentPath: 1 });
+fileStateSchema.index({ jobId: 1, isDirectory: 1, syncState: 1 });
 
 // Instance method: Update sync state based on metadata
 fileStateSchema.methods.updateSyncState = function(this: IFileState): void {

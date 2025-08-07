@@ -35,23 +35,52 @@ export const POST = withErrorHandler(async (request: NextRequest, { params }: { 
         throw new NotFoundError('Server profile not found');
       }
       
-      // Test connection using the server profile's testConnection method
+      // Test connection using the real SSH connection manager
       const connectionTimer = new PerformanceTimer(logger, 'ssh_connection_test');
       
       try {
-        // Note: The actual SSH connection test would be implemented here
-        // For now, we'll use the model's testConnection method which is a placeholder
-        const isConnected = await serverProfile.testConnection();
+        // Import SSH connection manager
+        const { SSHConnectionManager } = await import('@/lib/ssh/ssh-connection');
+        
+        // Build SSH configuration from server profile
+        const sshConfig = {
+          id: `test-${id}`,
+          name: `Test connection for ${serverProfile.name}`,
+          host: serverProfile.address,
+          port: serverProfile.port,
+          username: serverProfile.user,
+          ...(serverProfile.authMethod === 'password' 
+            ? { password: serverProfile.password }
+            : { privateKey: serverProfile.privateKey }
+          )
+        };
+
+        logger.debug('=== SSH Connection Test Debug ===', {
+          serverId: id,
+          host: sshConfig.host,
+          port: sshConfig.port,
+          username: sshConfig.username,
+          authMethod: serverProfile.authMethod,
+          hasPassword: serverProfile.authMethod === 'password' && !!serverProfile.password,
+          hasPrivateKey: serverProfile.authMethod === 'key' && !!serverProfile.privateKey
+        });
+
+        // Get SSH manager instance and test connection
+        const sshManager = SSHConnectionManager.getInstance();
+        const connectionResult = await sshManager.testConnection(sshConfig);
         
         const connectionDuration = connectionTimer.end({ 
           serverId: id,
-          success: isConnected,
+          success: connectionResult.success,
           serverAddress: serverProfile.address,
-          serverPort: serverProfile.port
+          serverPort: serverProfile.port,
+          connectionTime: connectionResult.details.connectionTime,
+          serverInfo: connectionResult.details.serverInfo,
+          homeDirectory: connectionResult.details.homeDirectory
         });
         
-        if (!isConnected) {
-          throw new ConnectionError('Failed to establish SSH connection');
+        if (!connectionResult.success) {
+          throw new ConnectionError(connectionResult.message);
         }
         
         // Log successful connection test
@@ -61,7 +90,10 @@ export const POST = withErrorHandler(async (request: NextRequest, { params }: { 
           serverAddress: serverProfile.address,
           serverPort: serverProfile.port,
           authMethod: serverProfile.authMethod,
-          duration: connectionDuration
+          duration: connectionDuration,
+          serverInfo: connectionResult.details.serverInfo,
+          homeDirectory: connectionResult.details.homeDirectory,
+          permissions: connectionResult.details.permissions
         }, 'connection test successful');
         
         timer.end({ serverId: id, success: true, duration: connectionDuration });
@@ -73,8 +105,12 @@ export const POST = withErrorHandler(async (request: NextRequest, { params }: { 
           serverPort: serverProfile.port,
           authMethod: serverProfile.authMethod,
           duration: connectionDuration,
+          connectionTime: connectionResult.details.connectionTime,
+          serverInfo: connectionResult.details.serverInfo,
+          homeDirectory: connectionResult.details.homeDirectory,
+          permissions: connectionResult.details.permissions,
           timestamp: new Date().toISOString(),
-          message: 'SSH connection successful'
+          message: connectionResult.message
         });
         
       } catch (connectionError) {
@@ -104,6 +140,7 @@ export const POST = withErrorHandler(async (request: NextRequest, { params }: { 
           serverPort: serverProfile.port,
           authMethod: serverProfile.authMethod,
           duration: connectionDuration,
+          connectionTime: 0,
           timestamp: new Date().toISOString(),
           error: connectionError instanceof Error ? connectionError.message : 'Connection failed',
           message: 'SSH connection failed'

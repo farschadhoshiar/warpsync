@@ -5,24 +5,38 @@ interface Job {
   _id: string;
   name: string;
   enabled: boolean;
-  serverProfileId: string;
+  serverProfileId: string | { _id: string; name: string; address: string; port: number };
+  targetType: 'server' | 'local';
+  targetServerId?: string | { _id: string; name: string; address: string; port: number };
   remotePath: string;
   localPath: string;
   chmod: string;
   scanInterval: number;
+  syncOptions: {
+    direction: 'download' | 'upload' | 'bidirectional';
+    deleteExtraneous: boolean;
+    preserveTimestamps: boolean;
+    preservePermissions: boolean;
+    compressTransfer: boolean;
+    dryRun: boolean;
+  };
+  retrySettings: {
+    maxRetries: number;
+    retryDelay: number;
+  };
   autoQueue: {
     enabled: boolean;
     patterns: string[];
     excludePatterns: string[];
   };
   delugeAction: {
-    action: 'none' | 'remove' | 'removeData' | 'setLabel';
-    delayMinutes: number;
+    action: 'none' | 'remove' | 'remove_data' | 'set_label';
+    delay: number;
     label?: string;
   };
   parallelism: {
-    maxTransfers: number;
-    maxConnections: number;
+    maxConcurrentTransfers: number;
+    maxConnectionsPerTransfer: number;
   };
   lastScan?: string;
   createdAt: string;
@@ -38,23 +52,37 @@ interface JobFormData {
   name: string;
   enabled: boolean;
   serverProfileId: string;
+  targetType: 'server' | 'local';
+  targetServerId?: string;
   remotePath: string;
   localPath: string;
   chmod: string;
   scanInterval: number;
+  syncOptions: {
+    direction: 'download' | 'upload' | 'bidirectional';
+    deleteExtraneous: boolean;
+    preserveTimestamps: boolean;
+    preservePermissions: boolean;
+    compressTransfer: boolean;
+    dryRun: boolean;
+  };
+  retrySettings: {
+    maxRetries: number;
+    retryDelay: number;
+  };
   autoQueue: {
     enabled: boolean;
     patterns: string[];
     excludePatterns: string[];
   };
   delugeAction: {
-    action: 'none' | 'remove' | 'removeData' | 'setLabel';
-    delayMinutes: number;
+    action: 'none' | 'remove' | 'remove_data' | 'set_label';
+    delay: number;
     label?: string;
   };
   parallelism: {
-    maxTransfers: number;
-    maxConnections: number;
+    maxConcurrentTransfers: number;
+    maxConnectionsPerTransfer: number;
   };
 }
 

@@ -3,11 +3,13 @@ import { EventEmitter } from '../websocket/emitter';
 import { RemoteScanner } from './remote-scanner';
 import { LocalScanner } from './local-scanner';
 import { SSHConnectionConfig } from '../ssh/types';
+import connectDB from '@/lib/mongodb';
 import { 
   DirectoryComparison, 
   FileComparison, 
   FileMetadata, 
-  FileState, 
+  DirectoryMetadata,
+  FileState as ScanFileState, 
   ScanOptions, 
   ScanProgress,
   ComparisonStats,
@@ -56,6 +58,8 @@ export class FileScanner {
         timestamp: new Date().toISOString()
       });
 
+      logger.info('Starting remote directory scan', { jobId, remotePath });
+
       // Scan remote directory
       const remoteProgress = (progress: ScanProgress) => {
         this.eventEmitter?.emitLogMessage({
@@ -74,7 +78,15 @@ export class FileScanner {
         remoteProgress
       );
 
+      logger.info('Remote scan completed', { 
+        jobId, 
+        filesFound: remoteResult.files.length,
+        totalSize: remoteResult.totalSize 
+      });
+
       // Scan local directory
+      logger.info('Starting local directory scan', { jobId, localPath });
+      
       const localProgress = (progress: ScanProgress) => {
         this.eventEmitter?.emitLogMessage({
           jobId,
@@ -85,15 +97,36 @@ export class FileScanner {
         });
       };
 
-      const localResult = await this.localScanner.scanDirectory(
-        localPath,
-        options,
-        localProgress
-      );
+      let localResult;
+      try {
+        localResult = await this.localScanner.scanDirectory(
+          localPath,
+          options,
+          localProgress
+        );
+        
+        logger.info('Local scan completed', { 
+          jobId, 
+          filesFound: localResult.files.length,
+          totalSize: localResult.totalSize 
+        });
+      } catch (localError) {
+        logger.error('Local scan failed', {
+          jobId,
+          localPath,
+          error: localError instanceof Error ? localError.message : 'Unknown error',
+          stack: localError instanceof Error ? localError.stack : undefined
+        });
+        throw localError;
+      }
 
       // Create file maps for efficient comparison
       const remoteFiles = this.createFileMap(remoteResult.files, remotePath);
       const localFiles = this.createFileMap(localResult.files, localPath);
+
+      // Create directory maps for directory-level operations
+      const remoteDirectories = this.createDirectoryMap(remoteResult.files, remotePath);
+      const localDirectories = this.createDirectoryMap(localResult.files, localPath);
 
       // Compare files and determine states
       const comparison = await this.performComparison(
@@ -102,6 +135,8 @@ export class FileScanner {
         localPath,
         remoteFiles,
         localFiles,
+        remoteDirectories,
+        localDirectories,
         autoQueueConfig
       );
 
@@ -182,7 +217,7 @@ export class FileScanner {
       return {
         relativePath,
         filename: relativePath.split('/').pop() || relativePath,
-        state: FileState.FAILED
+        state: ScanFileState.FAILED
       };
     }
   }
@@ -193,15 +228,23 @@ export class FileScanner {
     localPath: string,
     remoteFiles: Map<string, FileMetadata>,
     localFiles: Map<string, FileMetadata>,
+    remoteDirectories: Map<string, DirectoryMetadata>,
+    localDirectories: Map<string, DirectoryMetadata>,
     autoQueueConfig?: AutoQueueConfig
   ): Promise<DirectoryComparison> {
     const stats: ComparisonStats = {
       totalRemote: remoteFiles.size,
       totalLocal: localFiles.size,
+      totalRemoteDirectories: remoteDirectories.size,
+      totalLocalDirectories: localDirectories.size,
       synced: 0,
       remoteOnly: 0,
       localOnly: 0,
       desynced: 0,
+      directoriesSynced: 0,
+      directoriesRemoteOnly: 0,
+      directoriesLocalOnly: 0,
+      directoriesDesynced: 0,
       totalSizeRemote: 0,
       totalSizeLocal: 0
     };
@@ -214,14 +257,16 @@ export class FileScanner {
       stats.totalSizeLocal += file.size;
     }
 
-    // Get all unique relative paths
-    const allPaths = new Set([...remoteFiles.keys(), ...localFiles.keys()]);
+    // Get all unique relative paths (files and directories)
+    const allFilePaths = new Set([...remoteFiles.keys(), ...localFiles.keys()]);
+    const allDirectoryPaths = new Set([...remoteDirectories.keys(), ...localDirectories.keys()]);
+    const allPaths = new Set([...allFilePaths, ...allDirectoryPaths]);
     
     // Emit comparison progress via log
     this.eventEmitter?.emitLogMessage({
       jobId,
       level: 'info',
-      message: `Comparing ${allPaths.size} files between remote and local`,
+      message: `Comparing ${allPaths.size} items (${allFilePaths.size} files, ${allDirectoryPaths.size} directories) between remote and local`,
       source: 'scanner',
       timestamp: new Date().toISOString()
     });
@@ -229,43 +274,121 @@ export class FileScanner {
     let processedFiles = 0;
     const queuedFiles: string[] = [];
 
-    for (const relativePath of allPaths) {
-      const remote = remoteFiles.get(relativePath);
-      const local = localFiles.get(relativePath);
-      const state = this.determineFileState(remote, local);
+    // Connect to database and prepare FileState operations
+    await connectDB();
+    const { FileState } = await import('@/models');
 
-      // Update statistics
-      switch (state) {
-        case FileState.SYNCED:
-          stats.synced++;
-          break;
-        case FileState.REMOTE_ONLY:
-          stats.remoteOnly++;
-          // Check for auto-queue
-          if (autoQueueConfig?.enabled && remote && this.shouldAutoQueue(remote, autoQueueConfig)) {
-            queuedFiles.push(relativePath);
-          }
-          break;
-        case FileState.LOCAL_ONLY:
-          stats.localOnly++;
-          break;
-        case FileState.DESYNCED:
-          stats.desynced++;
-          break;
-      }
+    // Clear existing FileState records for this job
+    await FileState.deleteMany({ jobId });
 
-      processedFiles++;
+    // Process files in batches for better performance
+    const batchSize = 100;
+    const pathArray = Array.from(allPaths);
+    const fileStateRecords = [];
+
+    for (let i = 0; i < pathArray.length; i += batchSize) {
+      const batch = pathArray.slice(i, i + batchSize);
       
-      // Emit progress update every 100 files
-      if (processedFiles % 100 === 0) {
-        this.eventEmitter?.emitLogMessage({
+      for (const relativePath of batch) {
+        const remote = remoteFiles.get(relativePath) || remoteDirectories.get(relativePath);
+        const local = localFiles.get(relativePath) || localDirectories.get(relativePath);
+        const isDirectory = remoteDirectories.has(relativePath) || localDirectories.has(relativePath);
+        const state = this.determineFileState(remote, local);
+
+        // Update statistics
+        if (isDirectory) {
+          switch (state) {
+            case ScanFileState.SYNCED:
+              stats.directoriesSynced++;
+              break;
+            case ScanFileState.REMOTE_ONLY:
+              stats.directoriesRemoteOnly++;
+              break;
+            case ScanFileState.LOCAL_ONLY:
+              stats.directoriesLocalOnly++;
+              break;
+            case ScanFileState.DESYNCED:
+              stats.directoriesDesynced++;
+              break;
+          }
+        } else {
+          switch (state) {
+            case ScanFileState.SYNCED:
+              stats.synced++;
+              break;
+            case ScanFileState.REMOTE_ONLY:
+              stats.remoteOnly++;
+              // Check for auto-queue
+              if (autoQueueConfig?.enabled && remote && this.shouldAutoQueue(remote, autoQueueConfig)) {
+                queuedFiles.push(relativePath);
+              }
+              break;
+            case ScanFileState.LOCAL_ONLY:
+              stats.localOnly++;
+              break;
+            case ScanFileState.DESYNCED:
+              stats.desynced++;
+              break;
+          }
+        }
+
+        // Create FileState record
+        const filename = relativePath.split('/').pop() || relativePath;
+        const parentPath = relativePath.includes('/') ? relativePath.substring(0, relativePath.lastIndexOf('/')) : '';
+        
+        const fileStateRecord = {
           jobId,
-          level: 'debug',
-          message: `Comparison progress: ${processedFiles}/${allPaths.size} files processed`,
-          source: 'scanner',
-          timestamp: new Date().toISOString()
-        });
+          relativePath,
+          filename,
+          isDirectory,
+          parentPath,
+          remote: {
+            size: remote?.size,
+            modTime: remote?.modTime,
+            exists: !!remote,
+            isDirectory: remote?.isDirectory || false
+          },
+          local: {
+            size: local?.size,
+            modTime: local?.modTime,
+            exists: !!local,
+            isDirectory: local?.isDirectory || false
+          },
+          syncState: this.mapFileStateToSyncState(state),
+          transfer: {
+            progress: 0,
+            retryCount: 0
+          },
+          directorySize: isDirectory ? (remote?.size || local?.size || 0) : 0,
+          fileCount: isDirectory && 'fileCount' in (remote || local || {}) ? 
+            ((remote as DirectoryMetadata)?.fileCount || (local as DirectoryMetadata)?.fileCount || 0) : 0,
+          lastSeen: new Date(),
+          addedAt: new Date()
+        };
+
+        fileStateRecords.push(fileStateRecord);
+        processedFiles++;
+        
+        // Emit progress update every 100 files
+        if (processedFiles % 100 === 0) {
+          this.eventEmitter?.emitLogMessage({
+            jobId,
+            level: 'debug',
+            message: `Comparison progress: ${processedFiles}/${allPaths.size} files processed`,
+            source: 'scanner',
+            timestamp: new Date().toISOString()
+          });
+        }
       }
+    }
+
+    // Bulk insert FileState records
+    if (fileStateRecords.length > 0) {
+      await FileState.insertMany(fileStateRecords);
+      logger.info('Persisted FileState records to database', {
+        jobId,
+        count: fileStateRecords.length
+      });
     }
 
     // Log auto-queued files
@@ -282,6 +405,8 @@ export class FileScanner {
       localPath,
       remoteFiles,
       localFiles,
+      remoteDirectories,
+      localDirectories,
       comparedAt: new Date(),
       stats
     };
@@ -291,11 +416,34 @@ export class FileScanner {
     const fileMap = new Map<string, FileMetadata>();
     
     for (const file of files) {
-      const relativePath = this.getRelativePath(file.path, basePath);
-      fileMap.set(relativePath, file);
+      if (!file.isDirectory) {
+        const relativePath = this.getRelativePath(file.path, basePath);
+        fileMap.set(relativePath, file);
+      }
     }
     
     return fileMap;
+  }
+
+  private createDirectoryMap(files: FileMetadata[], basePath: string): Map<string, DirectoryMetadata> {
+    const directoryMap = new Map<string, DirectoryMetadata>();
+    
+    for (const file of files) {
+      if (file.isDirectory) {
+        const relativePath = this.getRelativePath(file.path, basePath);
+        const directoryMetadata: DirectoryMetadata = {
+          ...file,
+          isDirectory: true as const,
+          totalSize: file.size,
+          fileCount: 0,
+          childFiles: [],
+          childDirectories: []
+        };
+        directoryMap.set(relativePath, directoryMetadata);
+      }
+    }
+    
+    return directoryMap;
   }
 
   private getRelativePath(fullPath: string, basePath: string): string {
@@ -310,17 +458,17 @@ export class FileScanner {
     return normalizedFull;
   }
 
-  private determineFileState(remote?: FileMetadata, local?: FileMetadata): FileState {
+  private determineFileState(remote?: FileMetadata, local?: FileMetadata): ScanFileState {
     if (!remote && !local) {
-      return FileState.FAILED;
+      return ScanFileState.FAILED;
     }
     
     if (!remote) {
-      return FileState.LOCAL_ONLY;
+      return ScanFileState.LOCAL_ONLY;
     }
     
     if (!local) {
-      return FileState.REMOTE_ONLY;
+      return ScanFileState.REMOTE_ONLY;
     }
     
     // Both files exist - check if they're synced
@@ -329,17 +477,17 @@ export class FileScanner {
     
     // Consider files synced if size matches and time difference is less than 2 seconds
     if (sizeDiff === 0 && timeDiff < 2000) {
-      return FileState.SYNCED;
+      return ScanFileState.SYNCED;
     }
     
-    return FileState.DESYNCED;
+    return ScanFileState.DESYNCED;
   }
 
   private createFileComparison(
     relativePath: string,
     remote?: FileMetadata,
     local?: FileMetadata,
-    state?: FileState
+    state?: ScanFileState
   ): FileComparison {
     const filename = relativePath.split('/').pop() || relativePath;
     const actualState = state || this.determineFileState(remote, local);
@@ -424,5 +572,22 @@ export class FileScanner {
 
   private joinPaths(basePath: string, relativePath: string): string {
     return basePath.replace(/\/$/, '') + '/' + relativePath.replace(/^\//, '');
+  }
+
+  private mapFileStateToSyncState(state: ScanFileState): string {
+    switch (state) {
+      case ScanFileState.SYNCED:
+        return 'synced';
+      case ScanFileState.REMOTE_ONLY:
+        return 'remote_only';
+      case ScanFileState.LOCAL_ONLY:
+        return 'local_only';
+      case ScanFileState.DESYNCED:
+        return 'desynced';
+      case ScanFileState.FAILED:
+        return 'failed';
+      default:
+        return 'failed';
+    }
   }
 }

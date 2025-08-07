@@ -10,21 +10,15 @@ import { getRequestLogger, PerformanceTimer } from '@/lib/logger/request';
 import { SyncJobUpdateSchema } from '@/lib/validation/schemas';
 import { Types } from 'mongoose';
 
-interface RouteParams {
-  params: {
-    id: string;
-  };
-}
-
 /**
  * GET /api/jobs/[id]
  * Retrieve a specific sync job by ID
  */
-export const GET = withErrorHandler(async (req: NextRequest, { params }: RouteParams) => {
+export const GET = withErrorHandler(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const logger = await getRequestLogger();
   const timer = new PerformanceTimer(logger, 'get-sync-job');
   
-  const { id } = params;
+  const { id } = await params;
   
   // Validate ObjectId
   if (!Types.ObjectId.isValid(id)) {
@@ -69,11 +63,11 @@ export const GET = withErrorHandler(async (req: NextRequest, { params }: RoutePa
  * PUT /api/jobs/[id]
  * Update a specific sync job
  */
-export const PUT = withErrorHandler(async (req: NextRequest, { params }: RouteParams) => {
+export const PUT = withErrorHandler(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const logger = await getRequestLogger();
   const timer = new PerformanceTimer(logger, 'update-sync-job');
   
-  const { id } = params;
+  const { id } = await params;
   
   // Validate ObjectId
   if (!Types.ObjectId.isValid(id)) {
@@ -154,7 +148,7 @@ export const PUT = withErrorHandler(async (req: NextRequest, { params }: RoutePa
   
   return NextResponse.json({
     success: true,
-    data: updatedJob.toSafeObject(),
+    data: updatedJob.toObject(),
     timestamp: new Date().toISOString()
   });
 });
@@ -163,11 +157,11 @@ export const PUT = withErrorHandler(async (req: NextRequest, { params }: RoutePa
  * DELETE /api/jobs/[id]
  * Delete a specific sync job
  */
-export const DELETE = withErrorHandler(async (req: NextRequest, { params }: RouteParams) => {
+export const DELETE = withErrorHandler(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const logger = await getRequestLogger();
   const timer = new PerformanceTimer(logger, 'delete-sync-job');
   
-  const { id } = params;
+  const { id } = await params;
   
   // Validate ObjectId
   if (!Types.ObjectId.isValid(id)) {

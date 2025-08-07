@@ -10,21 +10,15 @@ import { getRequestLogger, PerformanceTimer } from '@/lib/logger/request';
 import { FileFilterSchema } from '@/lib/validation/schemas';
 import { Types } from 'mongoose';
 
-interface RouteParams {
-  params: {
-    jobId: string;
-  };
-}
-
 /**
  * GET /api/jobs/[jobId]/files
  * Retrieve file states for a sync job with filtering and pagination
  */
-export const GET = withErrorHandler(async (req: NextRequest, { params }: RouteParams) => {
+export const GET = withErrorHandler(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const logger = await getRequestLogger();
   const timer = new PerformanceTimer(logger, 'get-file-states');
   
-  const { jobId } = params;
+  const { id: jobId } = await params;
   
   // Validate ObjectId
   if (!Types.ObjectId.isValid(jobId)) {

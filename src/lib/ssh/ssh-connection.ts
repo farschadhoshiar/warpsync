@@ -171,7 +171,9 @@ export class SSHConnectionManager {
 
     try {
       // Use ls with detailed format for comprehensive file information
-      const command = buildSSHCommand('ls', ['-la', '--time-style=full-iso', escapeShellArg(normalizedPath)]);
+      // Escape the path properly to handle special characters and spaces
+      const escapedPath = escapeShellArg(normalizedPath);
+      const command = `ls -la --time-style=full-iso ${escapedPath}`;
       const result = await this.executeCommand(connection.id, command);
 
       const files = this.parseLsOutput(result.stdout, normalizedPath);
@@ -207,7 +209,8 @@ export class SSHConnectionManager {
     const connection = await this.pool.getConnection(config);
 
     try {
-      const command = buildSSHCommand('stat', ['-c', '%n|%s|%Y|%A|%F', escapeShellArg(normalizedPath)]);
+      const escapedPath = escapeShellArg(normalizedPath);
+      const command = `stat -c '%n|%s|%Y|%A|%F' ${escapedPath}`;
       const result = await this.executeCommand(connection.id, command);
 
       const fileInfo = this.parseStatOutput(result.stdout, normalizedPath);
@@ -258,7 +261,7 @@ export class SSHConnectionManager {
     for (const line of lines) {
       try {
         const file = this.parseLsLine(line, basePath);
-        if (file && file.name !== '.' && file.name !== '..') {
+        if (file) {
           files.push(file);
         }
       } catch (error) {
@@ -272,26 +275,65 @@ export class SSHConnectionManager {
   private parseLsLine(line: string, basePath: string): SSHFileInfo | null {
     // Parse ls -la output format:
     // drwxr-xr-x 2 user group 4096 2023-01-01 12:00:00.000000000 +0000 filename
+    // lrwxrwxrwx 1 user group   12 2023-01-01 12:00:00.000000000 +0000 symlink -> target
     const parts = line.trim().split(/\s+/);
     if (parts.length < 9) return null;
 
     const permissions = parts[0];
     const size = parseInt(parts[4], 10);
     const isDirectory = permissions.startsWith('d');
+    const isSymlink = permissions.startsWith('l');
     
     // Join date and time parts (parts 5-8 typically)
     const dateTimeStr = parts.slice(5, 8).join(' ');
     const modTime = new Date(dateTimeStr);
     
     // Filename is everything after the timestamp
-    const name = parts.slice(8).join(' ');
+    let filename = parts.slice(8).join(' ');
+    let targetPath = '';
+    
+    // Handle symbolic links - extract both the link name and target
+    if (isSymlink && filename.includes(' -> ')) {
+      const linkParts = filename.split(' -> ');
+      filename = linkParts[0];
+      targetPath = linkParts[1];
+      
+      // If target path is absolute, use it; otherwise resolve relative to basePath
+      if (targetPath.startsWith('/')) {
+        // Use the absolute target path for symlinks
+        return {
+          path: normalizeRemotePath(targetPath),
+          name: filename,
+          size: 0,
+          modTime: isNaN(modTime.getTime()) ? new Date() : modTime,
+          isDirectory: true, // Assume symlinks to directories are navigable
+          permissions: permissions.substring(1)
+        };
+      }
+    }
+    
+    // Skip current and parent directory entries
+    if (filename === '.' || filename === '..') {
+      return null;
+    }
+    
+    // Construct the full path more carefully
+    // Ensure we don't double up on directory separators
+    let fullPath: string;
+    if (basePath === '/') {
+      fullPath = `/${filename}`;
+    } else if (basePath.endsWith('/')) {
+      fullPath = `${basePath}${filename}`;
+    } else {
+      fullPath = `${basePath}/${filename}`;
+    }
     
     return {
-      path: normalizeRemotePath(`${basePath}/${name}`),
-      name,
-      size: isDirectory ? 0 : size,
+      path: normalizeRemotePath(fullPath),
+      name: filename,
+      size: (isDirectory || isSymlink) ? 0 : size,
       modTime: isNaN(modTime.getTime()) ? new Date() : modTime,
-      isDirectory,
+      isDirectory: isDirectory || isSymlink,
       permissions: permissions.substring(1) // Remove file type indicator
     };
   }

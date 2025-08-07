@@ -83,6 +83,12 @@ export const SyncJobCreateSchema = z.object({
     .min(1, 'Server profile is required')
     .regex(/^[0-9a-fA-F]{24}$/, 'Invalid server profile ID format'),
   
+  targetType: z.enum(['server', 'local']).default('local'),
+  
+  targetServerId: z.string()
+    .regex(/^[0-9a-fA-F]{24}$/, 'Invalid target server ID format')
+    .optional(),
+  
   remotePath: z.string()
     .min(1, 'Remote path is required')
     .regex(/^\/[a-zA-Z0-9\/_\-.\s]*$/, 'Remote path must be an absolute Unix path'),
@@ -103,6 +109,28 @@ export const SyncJobCreateSchema = z.object({
     .min(5, 'Scan interval must be at least 5 minutes')
     .max(10080, 'Scan interval cannot exceed 10080 minutes (1 week)')
     .default(60),
+  
+  syncOptions: z.object({
+    direction: z.enum(['download', 'upload', 'bidirectional']).default('download'),
+    deleteExtraneous: z.boolean().default(false),
+    preserveTimestamps: z.boolean().default(true),
+    preservePermissions: z.boolean().default(true),
+    compressTransfer: z.boolean().default(true),
+    dryRun: z.boolean().default(false)
+  }).optional(),
+  
+  retrySettings: z.object({
+    maxRetries: z.number()
+      .int('Max retries must be an integer')
+      .min(0, 'Max retries must be 0 or greater')
+      .max(10, 'Max retries cannot exceed 10')
+      .default(3),
+    retryDelay: z.number()
+      .int('Retry delay must be an integer')
+      .min(1000, 'Retry delay must be at least 1000ms')
+      .max(300000, 'Retry delay cannot exceed 300000ms (5 minutes)')
+      .default(5000)
+  }).optional(),
   
   autoQueue: z.object({
     enabled: z.boolean().default(false),
@@ -143,6 +171,19 @@ export const SyncJobCreateSchema = z.object({
       .max(20, 'Max connections per transfer cannot exceed 20')
       .default(5)
   }).optional()
+}).refine((data) => {
+  // Validate targetServerId is required when targetType is 'server'
+  if (data.targetType === 'server' && !data.targetServerId) {
+    return false;
+  }
+  // Validate source and target servers are different
+  if (data.targetType === 'server' && data.serverProfileId === data.targetServerId) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'Target server is required when target type is server, and source and target servers must be different',
+  path: ['targetServerId']
 });
 
 export const SyncJobUpdateSchema = SyncJobCreateSchema.partial();

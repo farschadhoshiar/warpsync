@@ -10,12 +10,6 @@ import { getRequestLogger, PerformanceTimer } from '@/lib/logger/request';
 import { Types } from 'mongoose';
 import { z } from 'zod';
 
-interface RouteParams {
-  params: {
-    jobId: string;
-  };
-}
-
 // Schema for bulk file actions
 const BulkFileActionSchema = z.object({
   action: z.enum(['queue', 'unqueue', 'deleteLocal', 'deleteRemote', 'deleteEverywhere', 'retry']),
@@ -30,11 +24,11 @@ const BulkFileActionSchema = z.object({
  * POST /api/jobs/[jobId]/files/actions
  * Perform bulk actions on multiple files
  */
-export const POST = withErrorHandler(async (req: NextRequest, { params }: RouteParams) => {
+export const POST = withErrorHandler(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const logger = await getRequestLogger();
   const timer = new PerformanceTimer(logger, 'bulk-file-action');
   
-  const { jobId } = params;
+  const { id: jobId } = await params;
   
   // Validate ObjectId
   if (!Types.ObjectId.isValid(jobId)) {

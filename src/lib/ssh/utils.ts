@@ -18,12 +18,18 @@ export function joinRemotePath(...paths: string[]): string {
 
 /**
  * Escape shell arguments for SSH commands
+ * Improved to handle more edge cases and special characters
  */
 export function escapeShellArg(arg: string): string {
-  if (!/[^A-Za-z0-9_\/:=-]/.test(arg)) {
+  // If the argument contains only safe characters, return as-is
+  if (!/[^A-Za-z0-9_\/:=.-]/.test(arg)) {
     return arg;
   }
-  return "'" + arg.replace(/'/g, "'\"'\"'") + "'";
+  
+  // For arguments with special characters, use single quotes and escape any single quotes
+  // This handles spaces, special characters, and prevents command injection
+  // Replace any single quotes with '\'' to properly escape them
+  return "'" + arg.replace(/'/g, "'\\''") + "'";
 }
 
 /**

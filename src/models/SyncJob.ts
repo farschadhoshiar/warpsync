@@ -7,10 +7,24 @@ export interface ISyncJob extends Document {
   name: string;
   enabled: boolean;
   serverProfileId: Types.ObjectId;
+  targetType: 'server' | 'local';
+  targetServerId?: Types.ObjectId;
   remotePath: string;
   localPath: string;
   chmod: string;
   scanInterval: number;
+  syncOptions: {
+    direction: 'download' | 'upload' | 'bidirectional';
+    deleteExtraneous: boolean;
+    preserveTimestamps: boolean;
+    preservePermissions: boolean;
+    compressTransfer: boolean;
+    dryRun: boolean;
+  };
+  retrySettings: {
+    maxRetries: number;
+    retryDelay: number;
+  };
   autoQueue: {
     enabled: boolean;
     patterns: string[];
@@ -64,6 +78,54 @@ const autoQueueSchema = new Schema({
   excludePatterns: {
     type: [String],
     default: []
+  }
+}, { _id: false });
+
+// Sync options subdocument schema
+const syncOptionsSchema = new Schema({
+  direction: {
+    type: String,
+    enum: {
+      values: ['download', 'upload', 'bidirectional'],
+      message: 'Direction must be one of: download, upload, bidirectional'
+    },
+    default: 'download'
+  },
+  deleteExtraneous: {
+    type: Boolean,
+    default: false
+  },
+  preserveTimestamps: {
+    type: Boolean,
+    default: true
+  },
+  preservePermissions: {
+    type: Boolean,
+    default: true
+  },
+  compressTransfer: {
+    type: Boolean,
+    default: true
+  },
+  dryRun: {
+    type: Boolean,
+    default: false
+  }
+}, { _id: false });
+
+// Retry settings subdocument schema
+const retrySettingsSchema = new Schema({
+  maxRetries: {
+    type: Number,
+    min: [0, 'Max retries must be 0 or greater'],
+    max: [10, 'Max retries cannot exceed 10'],
+    default: 3
+  },
+  retryDelay: {
+    type: Number,
+    min: [1000, 'Retry delay must be at least 1000ms'],
+    max: [300000, 'Retry delay cannot exceed 300000ms (5 minutes)'],
+    default: 5000
   }
 }, { _id: false });
 
@@ -140,6 +202,31 @@ const syncJobSchema = new Schema<ISyncJob>({
       message: 'Referenced server profile does not exist'
     }
   },
+  targetType: {
+    type: String,
+    enum: {
+      values: ['server', 'local'],
+      message: 'Target type must be either server or local'
+    },
+    required: [true, 'Target type is required'],
+    default: 'local'
+  },
+  targetServerId: {
+    type: Schema.Types.ObjectId,
+    ref: 'ServerProfile',
+    required: function(this: ISyncJob) {
+      return this.targetType === 'server';
+    },
+    validate: {
+      validator: async function(profileId: Types.ObjectId) {
+        if (!profileId) return true; // Let the required validator handle this
+        const ServerProfile = mongoose.model('ServerProfile');
+        const profile = await ServerProfile.findById(profileId);
+        return !!profile;
+      },
+      message: 'Referenced target server profile does not exist'
+    }
+  },
   remotePath: {
     type: String,
     required: [true, 'Remote path is required'],
@@ -182,6 +269,24 @@ const syncJobSchema = new Schema<ISyncJob>({
     max: [10080, 'Scan interval cannot exceed 10080 minutes (1 week)'],
     default: 60
   },
+  syncOptions: {
+    type: syncOptionsSchema,
+    default: () => ({
+      direction: 'download',
+      deleteExtraneous: false,
+      preserveTimestamps: true,
+      preservePermissions: true,
+      compressTransfer: true,
+      dryRun: false
+    })
+  },
+  retrySettings: {
+    type: retrySettingsSchema,
+    default: () => ({
+      maxRetries: 3,
+      retryDelay: 5000
+    })
+  },
   autoQueue: {
     type: autoQueueSchema,
     default: () => ({
@@ -222,6 +327,8 @@ const syncJobSchema = new Schema<ISyncJob>({
 // Indexes
 syncJobSchema.index({ name: 1 }, { unique: true });
 syncJobSchema.index({ serverProfileId: 1 });
+syncJobSchema.index({ targetServerId: 1 });
+syncJobSchema.index({ targetType: 1 });
 syncJobSchema.index({ enabled: 1 });
 syncJobSchema.index({ lastScan: 1 });
 syncJobSchema.index({ enabled: 1, lastScan: 1 });
@@ -314,6 +421,30 @@ syncJobSchema.pre('save', async function(this: ISyncJob, next) {
     const profile = await ServerProfile.findById(this.serverProfileId);
     if (!profile) {
       next(new Error('Referenced server profile does not exist'));
+      return;
+    }
+  }
+  
+  // Validate target server when targetType is 'server'
+  if (this.targetType === 'server') {
+    if (!this.targetServerId) {
+      next(new Error('Target server is required when target type is server'));
+      return;
+    }
+    
+    // Validate target server profile exists
+    if (this.isModified('targetServerId')) {
+      const ServerProfile = mongoose.model('ServerProfile');
+      const profile = await ServerProfile.findById(this.targetServerId);
+      if (!profile) {
+        next(new Error('Referenced target server profile does not exist'));
+        return;
+      }
+    }
+    
+    // Validate source and target servers are different
+    if (this.serverProfileId.toString() === this.targetServerId.toString()) {
+      next(new Error('Source and target servers must be different'));
       return;
     }
   }

@@ -13,26 +13,32 @@ if (!MONGODB_URI) {
   throw new Error('Please define the MONGODB_URI environment variable inside .env.local');
 }
 
-console.log('🔍 Attempting to connect to MongoDB with URI:', MONGODB_URI.replace(/\/\/.*@/, '//***:***@')); // Log URI without credentials
-
 let cached = global.mongoose;
 
 if (!cached) {
   cached = global.mongoose = { conn: null, promise: null };
 }
 
-// Connection event handlers
-mongoose.connection.on('connected', () => {
-  console.log('✅ Mongoose connected to MongoDB');
-});
+// Connection event handlers (only set up once)
+let eventsSetup = false;
 
-mongoose.connection.on('error', (err) => {
-  console.error('❌ Mongoose connection error:', err);
-});
+function setupConnectionEvents() {
+  if (eventsSetup) return;
+  
+  mongoose.connection.on('connected', () => {
+    console.log('✅ Mongoose connected to MongoDB');
+  });
 
-mongoose.connection.on('disconnected', () => {
-  console.log('🔌 Mongoose disconnected from MongoDB');
-});
+  mongoose.connection.on('error', (err) => {
+    console.error('❌ Mongoose connection error:', err);
+  });
+
+  mongoose.connection.on('disconnected', () => {
+    console.log('🔌 Mongoose disconnected from MongoDB');
+  });
+  
+  eventsSetup = true;
+}
 
 // Graceful shutdown handling
 process.on('SIGINT', async () => {
@@ -52,6 +58,8 @@ async function connectDB() {
   }
 
   if (!cached?.promise) {
+    setupConnectionEvents();
+    
     const opts = {
       bufferCommands: false,
       maxPoolSize: 10, // Maintain up to 10 socket connections
@@ -60,7 +68,7 @@ async function connectDB() {
       family: 4 // Use IPv4, skip trying IPv6
     };
 
-    cached!.promise = mongoose.connect(MONGODB_URI, opts).then(async (mongooseInstance) => {
+    cached!.promise = mongoose.connect(MONGODB_URI, opts).then(async () => {
       console.log('✅ Connected to MongoDB');
       
       // Import and register models on connection

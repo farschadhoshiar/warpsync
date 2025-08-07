@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createSuccessResponse, withErrorHandler, validateInput } from '@/lib/errors';
-import connectDB from '@/lib/mongodb';
+import { getModels } from '@/lib/database';
 import { ServerProfileCreateSchema, ServerFilterSchema } from '@/lib/validation/schemas';
 
 import { getRequestLogger, PerformanceTimer, logDatabaseOperation } from '@/lib/logger/request';
@@ -12,11 +12,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     const timer = new PerformanceTimer(logger, 'list_servers');
     
     try {
-      // Establish database connection
-      await connectDB();
-      
-      // Import models after connection
-      const { ServerProfile } = await import('@/models');
+      // Establish database connection and import models
+      const { ServerProfile } = await getModels();
       
       // Parse and validate query parameters
       const { searchParams } = request.nextUrl;
@@ -60,8 +57,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       
       // Remove sensitive data
       const safeServers = servers.map(server => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { password, privateKey, ...safeServer } = server;
         if (safeServer.deluge) {
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
           const { password: delugePassword, ...safeDeluge } = safeServer.deluge;
           safeServer.deluge = safeDeluge;
         }
@@ -77,9 +76,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
         totalPages
       };
       
-      timer.end({ serverCount: servers.length, pagination });
+      logDatabaseOperation(logger, 'find', 'serverprofiles', query, servers, dbTimer.getDuration());
       
-      logDatabaseOperation(logger, 'find', 'serverprofiles', query, servers, timer.end());
+      timer.end({ serverCount: servers.length, pagination });
       
       return createSuccessResponse(safeServers, pagination);
       
@@ -95,11 +94,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     const timer = new PerformanceTimer(logger, 'create_server');
     
     try {
-      // Establish database connection
-      await connectDB();
-      
-      // Import models after connection
-      const { ServerProfile } = await import('@/models');
+      // Establish database connection and import models
+      const { ServerProfile } = await getModels();
       
       // Parse and validate request body
       const body = await request.json();
@@ -118,9 +114,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // Return safe version without sensitive data
       const safeServer = serverProfile.toSafeObject();
       
-      timer.end({ serverId: serverProfile._id });
-      
       logDatabaseOperation(logger, 'create', 'serverprofiles', validatedData, serverProfile);
+      
+      timer.end({ serverId: serverProfile._id });
       
       return createSuccessResponse(safeServer);
       

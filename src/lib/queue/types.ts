@@ -31,7 +31,8 @@ export interface TransferJob {
 export enum TransferType {
   DOWNLOAD = 'download',
   UPLOAD = 'upload',
-  SYNC = 'sync'
+  SYNC = 'sync',
+  DIRECTORY = 'directory'
 }
 
 export enum TransferPriority {
