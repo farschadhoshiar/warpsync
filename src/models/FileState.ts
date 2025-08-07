@@ -61,6 +61,7 @@ export interface IFileStateModel extends Model<IFileState> {
   findByJob(jobId: string | Types.ObjectId, filters?: FileStateFilters): Promise<IFileState[]>;
   findQueuedFiles(): Promise<IFileState[]>;
   findTransferringFiles(): Promise<IFileState[]>;
+  recalculateDirectoryStats(jobId: string | Types.ObjectId): Promise<{ matchedCount: number; modifiedCount: number }>;
 }
 
 // Remote metadata subdocument schema
@@ -468,6 +469,43 @@ fileStateSchema.pre('save', function(this: IFileState, next) {
   
   next();
 });
+
+// Static method: Bulk recalculate directory statistics
+fileStateSchema.statics.recalculateDirectoryStats = async function(jobId: string | Types.ObjectId) {
+  const { calculateAllDirectoryStats } = await import('../lib/scanner/directory-stats');
+  
+  // Get all file states for the job
+  const fileStates = await this.find({ jobId }).lean();
+  
+  // Calculate statistics
+  const statsMap = calculateAllDirectoryStats(fileStates as unknown as import('../lib/scanner/directory-stats').FileStateRecord[]);
+  
+  // Update directories with calculated statistics
+  const bulkOps = [];
+  for (const [directoryPath, stats] of statsMap) {
+    bulkOps.push({
+      updateOne: {
+        filter: { 
+          jobId,
+          relativePath: directoryPath,
+          isDirectory: true
+        },
+        update: {
+          $set: {
+            directorySize: stats.directorySize,
+            fileCount: stats.fileCount
+          }
+        }
+      }
+    });
+  }
+
+  if (bulkOps.length > 0) {
+    return await this.bulkWrite(bulkOps);
+  }
+  
+  return { matchedCount: 0, modifiedCount: 0 };
+};
 
 // Create and export the model
 const FileState = mongoose.models.FileState || mongoose.model<IFileState, IFileStateModel>('FileState', fileStateSchema);

@@ -36,6 +36,7 @@ export interface DirectoryComparison {
   localDirectories: Map<string, DirectoryMetadata>;
   comparedAt: Date;
   stats: ComparisonStats;
+  autoQueuedFiles?: FileMetadata[];
 }
 
 export interface ComparisonStats {
@@ -83,6 +84,7 @@ export interface ScanOptions {
   includePatterns?: string[];
   compareContent?: boolean;
   parallelScans?: boolean;
+  autoQueueConfig?: AutoQueueConfig;
 }
 
 export interface PatternMatcher {

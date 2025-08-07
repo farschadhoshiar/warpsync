@@ -41,7 +41,7 @@ export interface SocketEvents {
     jobId?: string;
     level: 'debug' | 'info' | 'warn' | 'error';
     message: string;
-    source: 'rsync' | 'ssh' | 'scanner' | 'system';
+    source: 'rsync' | 'ssh' | 'scanner' | 'system' | 'scheduler';
     timestamp: string;
   };
   

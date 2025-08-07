@@ -4,6 +4,7 @@ import { RemoteScanner } from './remote-scanner';
 import { LocalScanner } from './local-scanner';
 import { SSHConnectionConfig } from '../ssh/types';
 import connectDB from '@/lib/mongodb';
+import { calculateAllDirectoryStats, FileStateRecord } from './directory-stats';
 import { 
   DirectoryComparison, 
   FileComparison, 
@@ -389,6 +390,46 @@ export class FileScanner {
         jobId,
         count: fileStateRecords.length
       });
+
+      // Calculate and update directory statistics
+      logger.info('Calculating directory statistics', { jobId });
+      try {
+        const allFileStates = fileStateRecords as unknown as FileStateRecord[];
+        const statsMap = calculateAllDirectoryStats(allFileStates);
+        
+        // Update directories with calculated statistics
+        const bulkOps = [];
+        for (const [directoryPath, stats] of statsMap) {
+          bulkOps.push({
+            updateOne: {
+              filter: { 
+                jobId,
+                relativePath: directoryPath,
+                isDirectory: true
+              },
+              update: {
+                $set: {
+                  directorySize: stats.directorySize,
+                  fileCount: stats.fileCount
+                }
+              }
+            }
+          });
+        }
+
+        if (bulkOps.length > 0) {
+          await FileState.bulkWrite(bulkOps);
+          logger.info('Updated directory statistics', {
+            jobId,
+            directoriesUpdated: bulkOps.length
+          });
+        }
+      } catch (error) {
+        logger.error('Failed to calculate directory statistics', {
+          jobId,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
     }
 
     // Log auto-queued files

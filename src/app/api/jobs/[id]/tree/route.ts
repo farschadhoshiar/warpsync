@@ -61,11 +61,20 @@ export const GET = withErrorHandler(async (req: NextRequest, { params }: { param
   const expandLevel = parseInt(url.searchParams.get('expandLevel') || '2');
   const showFiles = url.searchParams.get('showFiles') !== 'false';
   const syncStateFilter = url.searchParams.get('syncState');
+  const searchTerm = url.searchParams.get('search');
   
   // Build filter
   const filter: Record<string, unknown> = { jobId };
   if (syncStateFilter) {
     filter.syncState = syncStateFilter;
+  }
+  
+  // Add search filter if provided
+  if (searchTerm) {
+    filter.$or = [
+      { filename: { $regex: searchTerm, $options: 'i' } },
+      { relativePath: { $regex: searchTerm, $options: 'i' } }
+    ];
   }
   
   // Get all file states
@@ -129,7 +138,7 @@ export const GET = withErrorHandler(async (req: NextRequest, { params }: { param
   }
   
   // Second pass: build hierarchy
-  for (const [relativePath, node] of nodeMap) {
+  for (const node of nodeMap.values()) {
     if (!node.parent || node.parent === '') {
       // Root level node
       rootNodes.push(node);

@@ -58,6 +58,17 @@ export class RsyncCommandBuilder {
       if (config.sshConfig.port && (config.sshConfig.port < 1 || config.sshConfig.port > 65535)) {
         errors.push('SSH port must be between 1 and 65535');
       }
+      
+      // Validate authentication method
+      if (!config.sshConfig.privateKey && !config.sshConfig.password) {
+        errors.push('SSH authentication requires either privateKey or password');
+      }
+      
+      // Note: sshpass is required for password authentication
+      if (config.sshConfig.password && !config.sshConfig.privateKey) {
+        // We'll rely on runtime checking for sshpass availability
+        // Could add a check here if needed: errors.push('sshpass utility is required for password authentication');
+      }
     }
 
     // Validate options
@@ -96,6 +107,9 @@ export class RsyncCommandBuilder {
     if (options.itemizeChanges) args.push('-i');
     if (options.stats) args.push('--stats');
     if (options.humanReadable) args.push('-h');
+    if (options.createDirs) args.push('--dirs');
+    if (options.preserveHierarchy) args.push('--mkpath');
+    if (options.recursive) args.push('-r');
   }
 
   private static addFilterOptions(args: string[], options: RsyncOptions): void {
@@ -172,7 +186,16 @@ export class RsyncCommandBuilder {
       sshArgs.push(...additionalOptions);
     }
 
-    args.push('-e', `ssh ${sshArgs.join(' ')}`);
+    // Handle password authentication vs key authentication
+    if (sshConfig.password && !sshConfig.privateKey) {
+      // Use sshpass with environment variable for password authentication
+      // Command will be executed with SSHPASS environment variable
+      args.unshift('sshpass', '-e');
+      args.push('-e', `ssh ${sshArgs.join(' ')}`);
+    } else {
+      // Use standard SSH (key-based authentication)
+      args.push('-e', `ssh ${sshArgs.join(' ')}`);
+    }
   }
 
   private static formatPaths(config: RsyncConfig): { source: string; destination: string } {
@@ -242,6 +265,38 @@ export class RsyncCommandBuilder {
         itemizeChanges: true,
         stats: false,
         progress: false
+      }
+    };
+  }
+
+  /**
+   * Create rsync config for directory creation and structure preservation
+   */
+  static createDirectoryConfig(
+    remotePath: string,
+    localPath: string,
+    sshConfig: {
+      host: string;
+      port: number;
+      username: string;
+      privateKey?: string;
+      password?: string;
+    },
+    customOptions: Partial<RsyncOptions> = {}
+  ): RsyncConfig {
+    return {
+      source: remotePath,
+      destination: localPath,
+      sshConfig,
+      options: {
+        ...DEFAULT_RSYNC_OPTIONS,
+        createDirs: true,
+        preserveHierarchy: true,
+        recursive: true,
+        times: true,
+        perms: true,
+        verbose: true,
+        ...customOptions
       }
     };
   }

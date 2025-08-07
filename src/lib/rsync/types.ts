@@ -43,6 +43,9 @@ export interface RsyncOptions {
   logFile?: string;          // --log-file=FILE
   tempDir?: string;          // --temp-dir=DIR
   sshOptions?: string[];     // additional SSH options
+  createDirs?: boolean;       // --dirs (transfer directories without recursing)
+  preserveHierarchy?: boolean; // --mkpath (create missing path components)
+  recursive?: boolean;        // -r (recursive)
 }
 
 export interface RsyncProgress {

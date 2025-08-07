@@ -48,6 +48,34 @@ const serverFormSchema = z.object({
   delugePort: z.number().int().min(1).max(65535).optional(),
   delugeUsername: z.string().optional(),
   delugePassword: z.string().optional(),
+}).refine((data) => {
+  // For new servers, require credentials
+  if (data.authMethod === 'password' && !data.password) {
+    return false;
+  }
+  if (data.authMethod === 'key' && !data.privateKey) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'Password is required for password authentication, private key is required for key authentication',
+  path: ['authMethod']
+});
+
+// Separate schema for editing servers where credentials are optional
+const serverEditFormSchema = z.object({
+  name: z.string().min(1, 'Name is required').max(100, 'Name must be less than 100 characters'),
+  address: z.string().min(1, 'Address is required'),
+  port: z.number().int().min(1).max(65535, 'Port must be between 1 and 65535'),
+  user: z.string().min(1, 'Username is required'),
+  authMethod: z.enum(['password', 'key']),
+  password: z.string().optional(),
+  privateKey: z.string().optional(),
+  delugeEnabled: z.boolean(),
+  delugeHost: z.string().optional(),
+  delugePort: z.number().int().min(1).max(65535).optional(),
+  delugeUsername: z.string().optional(),
+  delugePassword: z.string().optional(),
 });
 
 type ServerFormData = z.infer<typeof serverFormSchema>;
@@ -61,12 +89,14 @@ export function ServerForm({ serverId, onClose }: ServerFormProps) {
   const { servers, createServer, updateServer, testConnection } = useServers();
   const [testing, setTesting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [isChangingKey, setIsChangingKey] = useState(false);
 
   const isEditing = !!serverId;
   const existingServer = servers.find(s => s._id === serverId);
 
   const form = useForm<ServerFormData>({
-    resolver: zodResolver(serverFormSchema),
+    resolver: zodResolver(isEditing ? serverEditFormSchema : serverFormSchema),
     defaultValues: {
       name: '',
       address: '',
@@ -100,23 +130,33 @@ export function ServerForm({ serverId, onClose }: ServerFormProps) {
         delugeUsername: existingServer.deluge?.username || '',
         delugePassword: '', // Don't populate password for security
       });
+      // Reset credential change states when loading new server data
+      setIsChangingPassword(false);
+      setIsChangingKey(false);
     }
   }, [isEditing, existingServer, form]);
 
   const authMethod = form.watch('authMethod');
   const delugeEnabled = form.watch('delugeEnabled');
 
+  // Reset credential change states when auth method changes
+  useEffect(() => {
+    setIsChangingPassword(false);
+    setIsChangingKey(false);
+    form.setValue('password', '');
+    form.setValue('privateKey', '');
+  }, [authMethod, form]);
+
   const onSubmit = async (data: ServerFormData) => {
     try {
       setSubmitting(true);
       
-      const serverData = {
+      const serverData: Partial<ServerFormData> = {
         name: data.name,
         address: data.address,
         port: data.port,
         user: data.user,
         authMethod: data.authMethod,
-        ...(data.authMethod === 'password' ? { password: data.password } : { privateKey: data.privateKey }),
         ...(data.delugeEnabled && {
           deluge: {
             enabled: true,
@@ -128,10 +168,27 @@ export function ServerForm({ serverId, onClose }: ServerFormProps) {
         }),
       };
 
-      if (isEditing && serverId) {
-        await updateServer(serverId, serverData);
+      // Only include credentials if this is a new server or credentials are being changed
+      if (!isEditing) {
+        // New server - always require credentials
+        if (data.authMethod === 'password') {
+          serverData.password = data.password;
+        } else {
+          serverData.privateKey = data.privateKey;
+        }
       } else {
-        await createServer(serverData);
+        // Editing existing server - only include credentials if they're being changed
+        if (data.authMethod === 'password' && isChangingPassword && data.password) {
+          serverData.password = data.password;
+        } else if (data.authMethod === 'key' && isChangingKey && data.privateKey) {
+          serverData.privateKey = data.privateKey;
+        }
+      }
+
+      if (isEditing && serverId) {
+        await updateServer(serverId, serverData as Partial<ServerFormData>);
+      } else {
+        await createServer(serverData as ServerFormData);
       }
       
       onClose();
@@ -309,42 +366,110 @@ export function ServerForm({ serverId, onClose }: ServerFormProps) {
               />
 
               {authMethod === 'password' && (
-                <FormField
-                  control={form.control}
-                  name="password"
-                  render={({ field }) => (
-                    <FormItem>
+                <div className="space-y-4">
+                  {!isEditing || isChangingPassword ? (
+                    <FormField
+                      control={form.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Password</FormLabel>
+                          <FormControl>
+                            <Input type="password" placeholder="Enter password" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                          {isEditing && isChangingPassword && (
+                            <div className="mt-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setIsChangingPassword(false);
+                                  form.setValue('password', '');
+                                }}
+                              >
+                                Cancel Password Change
+                              </Button>
+                            </div>
+                          )}
+                        </FormItem>
+                      )}
+                    />
+                  ) : (
+                    <div className="space-y-2">
                       <FormLabel>Password</FormLabel>
-                      <FormControl>
-                        <Input type="password" placeholder="Enter password" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
+                      <div className="flex items-center justify-between p-3 border rounded-md bg-muted">
+                        <span className="text-sm text-muted-foreground">Password is set (hidden for security)</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setIsChangingPassword(true)}
+                        >
+                          Change Password
+                        </Button>
+                      </div>
+                    </div>
                   )}
-                />
+                </div>
               )}
 
               {authMethod === 'key' && (
-                <FormField
-                  control={form.control}
-                  name="privateKey"
-                  render={({ field }) => (
-                    <FormItem>
+                <div className="space-y-4">
+                  {!isEditing || isChangingKey ? (
+                    <FormField
+                      control={form.control}
+                      name="privateKey"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>SSH Private Key</FormLabel>
+                          <FormControl>
+                            <Textarea 
+                              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+                              className="min-h-[100px]"
+                              {...field} 
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            Paste your SSH private key (OpenSSH format)
+                          </FormDescription>
+                          <FormMessage />
+                          {isEditing && isChangingKey && (
+                            <div className="mt-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setIsChangingKey(false);
+                                  form.setValue('privateKey', '');
+                                }}
+                              >
+                                Cancel Key Change
+                              </Button>
+                            </div>
+                          )}
+                        </FormItem>
+                      )}
+                    />
+                  ) : (
+                    <div className="space-y-2">
                       <FormLabel>SSH Private Key</FormLabel>
-                      <FormControl>
-                        <Textarea 
-                          placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
-                          className="min-h-[100px]"
-                          {...field} 
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Paste your SSH private key (OpenSSH format)
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
+                      <div className="flex items-center justify-between p-3 border rounded-md bg-muted">
+                        <span className="text-sm text-muted-foreground">SSH key is set (hidden for security)</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setIsChangingKey(true)}
+                        >
+                          Change SSH Key
+                        </Button>
+                      </div>
+                    </div>
                   )}
-                />
+                </div>
               )}
             </div>
 

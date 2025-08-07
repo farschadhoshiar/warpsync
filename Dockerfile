@@ -5,6 +5,7 @@ FROM node:20-alpine
 RUN apk add --no-cache \
     rsync \
     openssh-client \
+    sshpass \
     bash \
     curl
 

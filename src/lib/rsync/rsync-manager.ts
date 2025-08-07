@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import { logger } from '@/lib/logger';
 import { EventEmitter } from '../websocket/emitter';
 import { RsyncCommandBuilder } from './command-builder';
@@ -72,7 +72,10 @@ export class RsyncManager {
         fileId,
         command: this.sanitizeCommand(command),
         source: config.source,
-        destination: config.destination
+        destination: config.destination,
+        sshHost: config.sshConfig?.host,
+        sshUsername: config.sshConfig?.username,
+        sshPort: config.sshConfig?.port
       });
 
       // Start the process
@@ -111,7 +114,12 @@ export class RsyncManager {
 
     if (process.status === ProcessStatus.RUNNING) {
       try {
-        // Kill the process (implementation depends on how we store the child process)
+        // Kill the child process if it exists
+        const processWithChild = process as RsyncProcess & { childProcess?: ChildProcess };
+        if (processWithChild.childProcess) {
+          processWithChild.childProcess.kill('SIGTERM');
+        }
+        
         process.status = ProcessStatus.CANCELLED;
         process.endTime = new Date();
         
@@ -188,31 +196,47 @@ export class RsyncManager {
     jobId: string,
     fileId: string
   ): Promise<void> {
-    const process = this.processes.get(processId)!;
+    const rsyncProcess = this.processes.get(processId)!;
     const parser = new RsyncProgressParser();
     
     return new Promise((resolve, reject) => {
-      process.status = ProcessStatus.STARTING;
+      rsyncProcess.status = ProcessStatus.STARTING;
       
-      // Split command into program and arguments
-      const parts = command.split(' ');
-      const program = parts[0];
-      const args = parts.slice(1);
+      // Detect if using password authentication
+      const usesPasswordAuth = rsyncProcess.config.sshConfig?.password && !rsyncProcess.config.sshConfig?.privateKey;
+      
+      let childProcess;
+      
+      if (usesPasswordAuth) {
+        // Use shell execution for sshpass commands
+        childProcess = spawn(command, [], {
+          shell: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, SSHPASS: rsyncProcess.config.sshConfig!.password }
+        });
+      } else {
+        // Use direct spawn for key-based authentication
+        const parts = command.split(' ');
+        const program = parts[0];
+        const args = parts.slice(1);
+        
+        childProcess = spawn(program, args, {
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
+      }
 
-      // Spawn the rsync process
-      const childProcess = spawn(program, args, {
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
+      // Store child process reference for cancellation
+      (rsyncProcess as RsyncProcess & { childProcess?: ChildProcess }).childProcess = childProcess;
 
       let stdout = '';
       let stderr = '';
 
-      process.status = ProcessStatus.RUNNING;
+      rsyncProcess.status = ProcessStatus.RUNNING;
 
       // Set up timeout
       const timeout = setTimeout(() => {
         childProcess.kill('SIGTERM');
-        process.status = ProcessStatus.TIMEOUT;
+        rsyncProcess.status = ProcessStatus.TIMEOUT;
         reject(new Error('Transfer timeout'));
       }, this.config.defaultTimeout);
 
@@ -223,12 +247,12 @@ export class RsyncManager {
         
         for (const line of lines) {
           if (line.trim()) {
-            process.logs.push(line);
+            rsyncProcess.logs.push(line);
             
             // Parse progress
             const progress = parser.parseProgressLine(line);
             if (progress) {
-              process.progress = progress;
+              rsyncProcess.progress = progress;
               
               // Emit real-time progress
               this.eventEmitter?.emitTransferProgress({
@@ -259,7 +283,7 @@ export class RsyncManager {
       childProcess.stderr?.on('data', (data: Buffer) => {
         const errorLine = data.toString();
         stderr += errorLine;
-        process.errors.push(errorLine);
+        rsyncProcess.errors.push(errorLine);
         
         this.eventEmitter?.emitLogMessage({
           jobId,
@@ -273,13 +297,13 @@ export class RsyncManager {
       // Handle process completion
       childProcess.on('close', (exitCode) => {
         clearTimeout(timeout);
-        process.endTime = new Date();
+        rsyncProcess.endTime = new Date();
         
-        const duration = process.endTime.getTime() - process.startTime.getTime();
+        const duration = rsyncProcess.endTime.getTime() - rsyncProcess.startTime.getTime();
         const success = exitCode === 0;
         
-        process.status = success ? ProcessStatus.COMPLETED : ProcessStatus.FAILED;
-        process.result = {
+        rsyncProcess.status = success ? ProcessStatus.COMPLETED : ProcessStatus.FAILED;
+        rsyncProcess.result = {
           success,
           exitCode: exitCode || 0,
           stdout,
@@ -296,12 +320,21 @@ export class RsyncManager {
           success,
           exitCode,
           duration,
-          bytesTransferred: process.progress?.bytesTransferred || 0
+          bytesTransferred: rsyncProcess.progress?.bytesTransferred || 0,
+          stdout: stdout.substring(0, 500), // First 500 chars of stdout
+          stderr: stderr.substring(0, 500)  // First 500 chars of stderr
         });
 
         if (success) {
           resolve();
         } else {
+          logger.error('Rsync failed with details', {
+            processId,
+            exitCode,
+            stdout,
+            stderr,
+            command: 'rsync command was executed'
+          });
           reject(new Error(`Rsync failed with exit code ${exitCode}: ${stderr}`));
         }
       });
@@ -309,8 +342,8 @@ export class RsyncManager {
       // Handle process errors
       childProcess.on('error', (error) => {
         clearTimeout(timeout);
-        process.status = ProcessStatus.FAILED;
-        process.endTime = new Date();
+        rsyncProcess.status = ProcessStatus.FAILED;
+        rsyncProcess.endTime = new Date();
         
         logger.error('Rsync process error', {
           processId,
@@ -332,6 +365,7 @@ export class RsyncManager {
     // Remove sensitive information from command for logging
     return command
       .replace(/(-i\s+)[^\s]+/g, '$1[PRIVATE_KEY]')
-      .replace(/password[^\s]*/gi, '[PASSWORD]');
+      .replace(/password[^\s]*/gi, '[PASSWORD]')
+      .replace(/SSHPASS=[^\s]*/gi, 'SSHPASS=[PASSWORD]');
   }
 }

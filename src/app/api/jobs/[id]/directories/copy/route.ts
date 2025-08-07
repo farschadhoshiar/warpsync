@@ -4,7 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import connectDB from '@/lib/mongodb';
+import { withDatabase } from '@/lib/database';
 import { withErrorHandler } from '@/lib/errors';
 import { getRequestLogger, PerformanceTimer } from '@/lib/logger/request';
 import { TransferQueue } from '@/lib/queue/transfer-queue';
@@ -45,12 +45,12 @@ export const POST = withErrorHandler(async (req: NextRequest, { params }: { para
     createStructure,
     preserveHierarchy
   });
-  
-  await connectDB();
-  const { SyncJob, FileState } = await import('@/models');
-  
-  // Check if job exists and is enabled
-  const syncJob = await SyncJob.findById(id)
+
+  return await withDatabase(async () => {
+    const { SyncJob, FileState } = await import('@/models');
+    
+    // Check if job exists and is enabled
+    const syncJob = await SyncJob.findById(id)
     .populate('serverProfileId', 'name address port user authMethod password privateKey');
   
   if (!syncJob) {
@@ -251,4 +251,5 @@ export const POST = withErrorHandler(async (req: NextRequest, { params }: { para
       timestamp: new Date().toISOString()
     }, { status: 500 });
   }
+  }); // Close withDatabase
 });

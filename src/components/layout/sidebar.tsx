@@ -13,13 +13,15 @@ import {
   BarChart3, 
   Settings, 
   Menu,
-  Home
+  Home,
+  FolderTree
 } from 'lucide-react';
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: Home },
   { name: 'Servers', href: '/servers', icon: Server },
   { name: 'Sync Jobs', href: '/jobs', icon: FolderSync },
+  { name: 'Files', href: '/files', icon: FolderTree },
   { name: 'Queue', href: '/queue', icon: Activity },
   { name: 'Logs', href: '/logs', icon: BarChart3 },
   { name: 'Settings', href: '/settings', icon: Settings },

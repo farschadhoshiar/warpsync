@@ -55,12 +55,12 @@ export const ServerProfileCreateSchema = z.object({
 });
 
 export const ServerProfileUpdateSchema = ServerProfileCreateSchema.partial().refine((data) => {
-  // Only validate auth credentials if authMethod is being updated
+  // Only validate auth credentials if authMethod is being updated AND credentials are provided
   if (data.authMethod) {
-    if (data.authMethod === 'password' && !data.password) {
+    if (data.authMethod === 'password' && data.password !== undefined && !data.password) {
       return false;
     }
-    if (data.authMethod === 'key' && !data.privateKey) {
+    if (data.authMethod === 'key' && data.privateKey !== undefined && !data.privateKey) {
       return false;
     }
   }
@@ -280,6 +280,22 @@ export const ConnectionTestSchema = z.object({
     .optional()
 });
 
+// Tree view schema
+export const TreeFilterSchema = z.object({
+  expandLevel: z.string()
+    .regex(/^\d+$/, 'Expand level must be a positive integer')
+    .transform(Number)
+    .refine(n => n >= 0 && n <= 10, 'Expand level must be between 0 and 10')
+    .default(2),
+  showFiles: z.string()
+    .regex(/^(true|false)$/, 'Show files must be true or false')
+    .transform(value => value === 'true')
+    .default(true),
+  search: z.string().optional(),
+  syncState: z.enum(['synced', 'remote_only', 'local_only', 'desynced', 'queued', 'transferring', 'failed'])
+    .optional()
+});
+
 // Type exports for TypeScript usage
 export type ServerProfileCreate = z.infer<typeof ServerProfileCreateSchema>;
 export type ServerProfileUpdate = z.infer<typeof ServerProfileUpdateSchema>;
@@ -291,5 +307,6 @@ export type FileFilterParams = z.infer<typeof FileFilterSchema>;
 export type ServerFilterParams = z.infer<typeof ServerFilterSchema>;
 export type JobFilterParams = z.infer<typeof JobFilterSchema>;
 export type ConnectionTestParams = z.infer<typeof ConnectionTestSchema>;
+export type TreeFilterParams = z.infer<typeof TreeFilterSchema>;
 export type ApiSuccessResponse = z.infer<typeof ApiSuccessResponseSchema>;
 export type ApiErrorResponse = z.infer<typeof ApiErrorResponseSchema>;

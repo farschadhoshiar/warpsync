@@ -1,14 +1,15 @@
 "use client";
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { FolderSync, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import JobForm from '@/components/jobs/job-form';
-import FileViewerDialog from '@/components/jobs/file-viewer-dialog';
 import { useJobs } from '@/hooks/useJobs';
+import { SchedulerCard } from '@/components/scheduler/scheduler-card';
 
 interface SyncJobFormData {
   name: string;
@@ -76,9 +77,9 @@ interface Job {
 }
 
 export default function JobsPage() {
+  const router = useRouter();
   const [showJobForm, setShowJobForm] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
-  const [viewingFiles, setViewingFiles] = useState<{ jobId: string; jobName: string } | null>(null);
   const [scanningJob, setScanningJob] = useState<string | null>(null);
   const { jobs, loading, createJob, updateJob, refetch } = useJobs();
 
@@ -209,11 +210,8 @@ export default function JobsPage() {
     }
   };
 
-  const handleViewFiles = (job: Job) => {
-    setViewingFiles({
-      jobId: job._id,
-      jobName: job.name
-    });
+  const handleViewFiles = (job: { _id: string; name: string }) => {
+    router.push(`/files?jobId=${job._id}`);
   };
 
   const handleCloseJobForm = () => {
@@ -255,6 +253,9 @@ export default function JobsPage() {
 
   return (
     <div className="space-y-6">
+      {/* Background Scheduler Status */}
+      <SchedulerCard />
+      
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Sync Jobs</h1>
@@ -389,16 +390,6 @@ export default function JobsPage() {
           />
         </DialogContent>
       </Dialog>
-
-      {/* File Viewer Dialog */}
-      {viewingFiles && (
-        <FileViewerDialog
-          jobId={viewingFiles.jobId}
-          jobName={viewingFiles.jobName}
-          isOpen={!!viewingFiles}
-          onClose={() => setViewingFiles(null)}
-        />
-      )}
     </div>
   );
 }
