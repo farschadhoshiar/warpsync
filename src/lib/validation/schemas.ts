@@ -86,8 +86,12 @@ export const SyncJobCreateSchema = z.object({
   targetType: z.enum(['server', 'local']).default('local'),
   
   targetServerId: z.string()
-    .regex(/^[0-9a-fA-F]{24}$/, 'Invalid target server ID format')
-    .optional(),
+    .transform(val => val === '' ? undefined : val)
+    .optional()
+    .refine((val) => {
+      if (val === undefined) return true;
+      return /^[0-9a-fA-F]{24}$/.test(val);
+    }, 'Invalid target server ID format'),
   
   remotePath: z.string()
     .min(1, 'Remote path is required')
