@@ -39,7 +39,9 @@ if (process.env.NODE_ENV === "development" && !process.env.NEXT_RUNTIME) {
 // Base logger configuration
 export const logger = pino(
   {
-    level: process.env.LOG_LEVEL || "info",
+    level:
+      process.env.LOG_LEVEL ||
+      (process.env.NODE_ENV === "development" ? "info" : "info"),
 
     // Base fields included in all logs
     base: {
@@ -94,10 +96,9 @@ export const logger = pino(
   transport,
 );
 
-// Development console logger for detailed debugging - only when explicitly enabled
+// Development console logger for detailed debugging
 export const devLogger =
-  process.env.NODE_ENV === "development" &&
-  process.env.ENABLE_DEV_LOGS === "true"
+  process.env.NODE_ENV === "development"
     ? {
         info: (msg: string, data?: any) => {
           console.log(`\n🔍 ${msg}`);
