@@ -1,5 +1,5 @@
-import { posix } from 'path';
-import { SSHCommandResult, SSHConnectionError } from './types';
+import { posix } from "path";
+import { SSHCommandResult, SSHConnectionError } from "./types";
 
 /**
  * Normalize path for remote Unix systems
@@ -25,7 +25,7 @@ export function escapeShellArg(arg: string): string {
   if (!/[^A-Za-z0-9_\/:=.-]/.test(arg)) {
     return arg;
   }
-  
+
   // For arguments with special characters, use single quotes and escape any single quotes
   // This handles spaces, special characters, and prevents command injection
   // Replace any single quotes with '\'' to properly escape them
@@ -35,14 +35,21 @@ export function escapeShellArg(arg: string): string {
 /**
  * Escape paths for rsync over SSH
  * Rsync over SSH requires different escaping than general shell commands
- * Uses backslash escaping instead of quotes for compatibility with rsync
+ * Uses quoted paths for better compatibility with spaces and special characters
  */
 export function escapeRsyncSSHPath(path: string): string {
-  // For rsync over SSH, escape spaces and special characters with backslashes
-  // This is different from general shell escaping which uses quotes
-  // Characters that need escaping: space, backslash, dollar, backtick, double quote, single quote,
-  // semicolon, ampersand, pipe, redirects, parentheses, braces, brackets, wildcards, tilde
-  return path.replace(/([\\$`"\s';&|<>(){}[\]?*~])/g, '\\$1');
+  // For rsync over SSH, use single quotes to wrap the entire path
+  // This is more reliable than backslash escaping for paths with spaces
+  // Single quotes preserve all characters literally except for single quotes themselves
+
+  // If the path contains single quotes, we need to escape them specially
+  if (path.includes("'")) {
+    // Replace each single quote with '\'' (end quote, escaped quote, start quote)
+    return "'" + path.replace(/'/g, "'\\''") + "'";
+  }
+
+  // For paths without single quotes, simply wrap in single quotes
+  return "'" + path + "'";
 }
 
 /**
@@ -50,7 +57,7 @@ export function escapeRsyncSSHPath(path: string): string {
  */
 export function buildSSHCommand(command: string, args: string[] = []): string {
   const escapedArgs = args.map(escapeShellArg);
-  return [command, ...escapedArgs].join(' ');
+  return [command, ...escapedArgs].join(" ");
 }
 
 /**
@@ -58,17 +65,17 @@ export function buildSSHCommand(command: string, args: string[] = []): string {
  */
 export function parseFilePermissions(permString: string): string {
   // Convert rwxrwxrwx format to octal
-  if (permString.length !== 9) return '644';
-  
-  let octal = '';
+  if (permString.length !== 9) return "644";
+
+  let octal = "";
   for (let i = 0; i < 9; i += 3) {
     let value = 0;
-    if (permString[i] === 'r') value += 4;
-    if (permString[i + 1] === 'w') value += 2;
-    if (permString[i + 2] === 'x') value += 1;
+    if (permString[i] === "r") value += 4;
+    if (permString[i + 1] === "w") value += 2;
+    if (permString[i + 2] === "x") value += 1;
     octal += value.toString();
   }
-  
+
   return octal;
 }
 
@@ -96,39 +103,47 @@ export function parseModTime(dateString: string): Date {
 /**
  * Validate that a path is absolute and safe
  */
-export function validatePath(path: string, isRemote = true): { valid: boolean; error?: string } {
-  if (!path || typeof path !== 'string') {
-    return { valid: false, error: 'Path must be a non-empty string' };
+export function validatePath(
+  path: string,
+  isRemote = true,
+): { valid: boolean; error?: string } {
+  if (!path || typeof path !== "string") {
+    return { valid: false, error: "Path must be a non-empty string" };
   }
 
   // Remove any trailing slashes except for root
-  const normalizedPath = path.endsWith('/') && path.length > 1 
-    ? path.slice(0, -1) 
-    : path;
+  const normalizedPath =
+    path.endsWith("/") && path.length > 1 ? path.slice(0, -1) : path;
 
   if (isRemote) {
     // Remote paths should be absolute Unix paths
-    if (!normalizedPath.startsWith('/')) {
-      return { valid: false, error: 'Remote path must be absolute (start with /)' };
+    if (!normalizedPath.startsWith("/")) {
+      return {
+        valid: false,
+        error: "Remote path must be absolute (start with /)",
+      };
     }
   } else {
     // Local paths can be Unix or Windows absolute paths
-    const isUnixAbsolute = normalizedPath.startsWith('/');
+    const isUnixAbsolute = normalizedPath.startsWith("/");
     const isWindowsAbsolute = /^[A-Za-z]:[\\/]/.test(normalizedPath);
-    
+
     if (!isUnixAbsolute && !isWindowsAbsolute) {
-      return { valid: false, error: 'Local path must be absolute' };
+      return { valid: false, error: "Local path must be absolute" };
     }
   }
 
   // Check for path traversal attempts
-  if (normalizedPath.includes('..')) {
-    return { valid: false, error: 'Path cannot contain parent directory references (..)' };
+  if (normalizedPath.includes("..")) {
+    return {
+      valid: false,
+      error: "Path cannot contain parent directory references (..)",
+    };
   }
 
   // Check for null bytes and other dangerous characters
   if (/[\x00-\x1f\x7f]/.test(normalizedPath)) {
-    return { valid: false, error: 'Path contains invalid control characters' };
+    return { valid: false, error: "Path contains invalid control characters" };
   }
 
   return { valid: true };
@@ -140,9 +155,9 @@ export function validatePath(path: string, isRemote = true): { valid: boolean; e
 export function createSSHError(
   message: string,
   code: string,
-  level: 'connection' | 'authentication' | 'command' | 'network' = 'command',
+  level: "connection" | "authentication" | "command" | "network" = "command",
   retryable = false,
-  connectionId?: string
+  connectionId?: string,
 ): SSHConnectionError {
   const error = new Error(message) as SSHConnectionError;
   error.code = code;
@@ -159,13 +174,13 @@ export function parseCommandResult(
   stdout: string,
   stderr: string,
   exitCode: number,
-  executionTime: number
+  executionTime: number,
 ): SSHCommandResult {
   const result: SSHCommandResult = {
     stdout: stdout.trim(),
     stderr: stderr.trim(),
     exitCode,
-    executionTime
+    executionTime,
   };
 
   return result;
@@ -176,42 +191,48 @@ export function parseCommandResult(
  */
 export function isRetryableError(error: Error): boolean {
   const retryableMessages = [
-    'Connection timeout',
-    'Network is unreachable',
-    'Connection refused',
-    'Host is down',
-    'Temporary failure',
-    'Too many connections'
+    "Connection timeout",
+    "Network is unreachable",
+    "Connection refused",
+    "Host is down",
+    "Temporary failure",
+    "Too many connections",
   ];
 
   const message = error.message.toLowerCase();
-  return retryableMessages.some(retryableMsg => 
-    message.includes(retryableMsg.toLowerCase())
+  return retryableMessages.some((retryableMsg) =>
+    message.includes(retryableMsg.toLowerCase()),
   );
 }
 
 /**
  * Extract connection info from SSH config
  */
-export function extractConnectionInfo(host: string, port?: number, username?: string) {
+export function extractConnectionInfo(
+  host: string,
+  port?: number,
+  username?: string,
+) {
   return {
     host: host.trim(),
     port: port || 22,
-    username: username || 'root',
-    identifier: `${username || 'root'}@${host.trim()}:${port || 22}`
+    username: username || "root",
+    identifier: `${username || "root"}@${host.trim()}:${port || 22}`,
   };
 }
 
 /**
  * Generate SSH connection timeout based on operation type
  */
-export function getTimeoutForOperation(operation: 'connect' | 'command' | 'transfer'): number {
+export function getTimeoutForOperation(
+  operation: "connect" | "command" | "transfer",
+): number {
   const timeouts = {
-    connect: 30000,    // 30 seconds
-    command: 60000,    // 1 minute
-    transfer: 300000   // 5 minutes
+    connect: 30000, // 30 seconds
+    command: 60000, // 1 minute
+    transfer: 300000, // 5 minutes
   };
-  
+
   return timeouts[operation];
 }
 
@@ -219,13 +240,13 @@ export function getTimeoutForOperation(operation: 'connect' | 'command' | 'trans
  * Format bytes for display
  */
 export function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  
+  if (bytes === 0) return "0 B";
+
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
 /**

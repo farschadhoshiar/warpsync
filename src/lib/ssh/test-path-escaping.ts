@@ -15,36 +15,37 @@ const testCases: TestCase[] = [
   {
     input: "Season 08",
     description: "Simple space in directory name",
-    expectedPattern: /Season\\ 08/,
+    expectedPattern: /'Season 08'/,
   },
   {
     input: "Movie (2023)",
     description: "Parentheses in name",
-    expectedPattern: /Movie\\ \\\(2023\\\)/,
+    expectedPattern: /'Movie \(2023\)'/,
   },
   {
     input: "Director's Cut",
     description: "Single quote in name",
-    expectedPattern: /Director\\'s\\ Cut/,
+    expectedPattern: /'Director'\\''s Cut'/,
   },
   {
     input: "TV Shows/Season 01/Episode 01",
     description: "Nested path with spaces",
-    expectedPattern: /TV\\ Shows\/Season\\ 01\/Episode\\ 01/,
+    expectedPattern: /'TV Shows\/Season 01\/Episode 01'/,
   },
   {
     input: "Collection & More",
     description: "Ampersand character",
-    expectedPattern: /Collection\\ \\\&\\ More/,
+    expectedPattern: /'Collection & More'/,
   },
   {
     input: "no-spaces-or-special-chars",
     description: "Safe path with no special characters",
+    expectedPattern: /'no-spaces-or-special-chars'/,
   },
   {
     input: "/path/with spaces/and$special",
     description: "Complex path with multiple special characters",
-    expectedPattern: /\/path\/with\\ spaces\/and\\\$special/,
+    expectedPattern: /'\/path\/with spaces\/and\$special'/,
   },
 ];
 
@@ -75,12 +76,13 @@ function testRsyncSSHPathEscaping(): void {
         failed++;
       }
     } else {
-      // For safe paths, should be unchanged
-      if (result === testCase.input) {
-        console.log(`   ✅ PASS - Safe path unchanged`);
+      // For safe paths, should be quoted for consistency
+      const expectedQuoted = `'${testCase.input}'`;
+      if (result === expectedQuoted) {
+        console.log(`   ✅ PASS - Safe path properly quoted`);
         passed++;
       } else {
-        console.log(`   ❌ FAIL - Safe path was modified unexpectedly`);
+        console.log(`   ❌ FAIL - Expected: ${expectedQuoted}, Got: ${result}`);
         failed++;
       }
     }
@@ -107,6 +109,7 @@ function compareEscapingMethods(): void {
     "Movie Collection (HD)",
     "TV Shows/Season 01",
     "/remote/path/Season 08",
+    "Director's Cut",
   ];
 
   for (const testPath of spaceCases) {
