@@ -5,15 +5,30 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useServers } from '@/hooks/useServers';
 import { useJobs } from '@/hooks/useJobs';
+import { useDashboardAnalytics } from '@/hooks/useDashboardAnalytics';
 import { Server, FolderSync, Activity, Clock, Plus } from 'lucide-react';
 import Link from 'next/link';
+import { ServerStatusChart } from '@/components/charts/server-status-chart';
+import { TransferVolumeChart } from '@/components/charts/transfer-volume-chart';
+import { FileSizeDistributionChart } from '@/components/charts/file-size-distribution';
+import { TransferSuccessTimeline } from '@/components/charts/transfer-success-timeline';
 
 export default function DashboardPage() {
   const { servers, loading: serversLoading } = useServers();
   const { jobs, loading: jobsLoading } = useJobs();
+  const { 
+    dashboardStats, 
+    serverAnalytics, 
+    transferAnalytics, 
+    fileAnalytics, 
+    loading: analyticsLoading 
+  } = useDashboardAnalytics();
 
   const activeJobs = jobs.filter(job => job.enabled);
-  const totalServers = servers.length;
+  const totalServers = dashboardStats?.servers.total || servers.length;
+  const activeServers = dashboardStats?.servers.active || 0;
+  const activeTransfers = dashboardStats?.transfers.active || 0;
+  const queuedTransfers = dashboardStats?.transfers.queued || 0;
 
   return (
     <div className="space-y-6">
@@ -33,10 +48,10 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {serversLoading ? '...' : totalServers}
+              {serversLoading || analyticsLoading ? '...' : totalServers}
             </div>
             <p className="text-xs text-muted-foreground">
-              Connected remote servers
+              {activeServers} active, {totalServers - activeServers} inactive
             </p>
           </CardContent>
         </Card>
@@ -62,7 +77,9 @@ export default function DashboardPage() {
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">0</div>
+            <div className="text-2xl font-bold">
+              {analyticsLoading ? '...' : activeTransfers}
+            </div>
             <p className="text-xs text-muted-foreground">
               Currently transferring files
             </p>
@@ -75,12 +92,37 @@ export default function DashboardPage() {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">0</div>
+            <div className="text-2xl font-bold">
+              {analyticsLoading ? '...' : queuedTransfers}
+            </div>
             <p className="text-xs text-muted-foreground">
               Files waiting to sync
             </p>
           </CardContent>
         </Card>
+      </div>
+
+      {/* Charts Section */}
+      <div className="grid gap-6 md:grid-cols-2">
+        <ServerStatusChart 
+          data={serverAnalytics?.connectionStatus} 
+          loading={analyticsLoading} 
+        />
+        <TransferVolumeChart 
+          data={transferAnalytics?.dailyTransfers} 
+          loading={analyticsLoading} 
+        />
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        <FileSizeDistributionChart 
+          data={transferAnalytics?.fileSizeDistribution} 
+          loading={analyticsLoading} 
+        />
+        <TransferSuccessTimeline 
+          data={transferAnalytics?.dailyTransfers} 
+          loading={analyticsLoading} 
+        />
       </div>
 
       {/* Quick Actions */}
