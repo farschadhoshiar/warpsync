@@ -38,14 +38,13 @@ export function escapeShellArg(arg: string): string {
  * Uses double backslash escaping to handle both local and remote shell layers
  */
 export function escapeRsyncSSHPath(path: string): string {
-  // For rsync over SSH, we need double escaping because:
-  // 1. Local shell processes the first level of escaping
-  // 2. Remote shell (via SSH) processes the second level
-  // 3. Final path is correctly unescaped on the remote system
+  // For rsync over SSH with spawn(), we use single backslash escaping
+  // spawn() passes arguments directly without shell interpretation,
+  // so the remote SSH shell only processes one level of escaping
 
   // Characters that need escaping: space, backslash, dollar, backtick, double quote, single quote,
   // semicolon, ampersand, pipe, redirects, parentheses, braces, brackets, wildcards, tilde
-  return path.replace(/([\\$`"\s';&|<>(){}[\]?*~])/g, "\\\\$1");
+  return path.replace(/([\\$`"\s';&|<>(){}[\]?*~])/g, "\\$1");
 }
 
 /**
