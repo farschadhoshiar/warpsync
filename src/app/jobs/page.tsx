@@ -14,11 +14,14 @@ import { SchedulerCard } from '@/components/scheduler/scheduler-card';
 interface SyncJobFormData {
   name: string;
   description?: string;
+  enabled: boolean;
   sourceServerId: string;
   targetType: 'server' | 'local';
   targetServerId?: string;
   sourcePath: string;
   targetPath: string;
+  chmod: string;
+  scanInterval: number;
   direction: 'download' | 'upload' | 'bidirectional';
   deleteExtraneous: boolean;
   preserveTimestamps: boolean;
@@ -27,6 +30,14 @@ interface SyncJobFormData {
   dryRun: boolean;
   maxRetries: number;
   retryDelay: number;
+  autoQueueEnabled: boolean;
+  autoQueuePatterns: string[];
+  autoQueueExcludePatterns: string[];
+  maxConcurrentTransfers: number;
+  maxConnectionsPerTransfer: number;
+  delugeAction: 'none' | 'remove' | 'remove_data' | 'set_label';
+  delugeDelay: number;
+  delugeLabel?: string;
 }
 
 interface Job {
@@ -58,13 +69,13 @@ interface Job {
     excludePatterns: string[];
   };
   delugeAction: {
-    action: 'none' | 'remove' | 'removeData' | 'setLabel';
-    delayMinutes: number;
+    action: 'none' | 'remove' | 'remove_data' | 'set_label';
+    delay: number;
     label?: string;
   };
   parallelism: {
-    maxTransfers: number;
-    maxConnections: number;
+    maxConcurrentTransfers: number;
+    maxConnectionsPerTransfer: number;
   };
   lastScan?: string;
   createdAt: string;
@@ -85,17 +96,17 @@ export default function JobsPage() {
 
   const handleCreateJob = async (data: SyncJobFormData) => {
     try {
-      // Transform the sync job form data to match the API schema
+      // Transform the form data to match the API schema
       const transformedData = {
         name: data.name,
-        enabled: true, // Default to enabled
-        serverProfileId: data.sourceServerId, // Use source server as the main server
+        enabled: data.enabled,
+        serverProfileId: data.sourceServerId,
         targetType: data.targetType,
         targetServerId: data.targetServerId,
         remotePath: data.sourcePath,
         localPath: data.targetPath,
-        chmod: '755', // Default chmod
-        scanInterval: 3600, // Default 1 hour scan interval
+        chmod: data.chmod,
+        scanInterval: data.scanInterval,
         syncOptions: {
           direction: data.direction,
           deleteExtraneous: data.deleteExtraneous,
@@ -109,17 +120,18 @@ export default function JobsPage() {
           retryDelay: data.retryDelay
         },
         autoQueue: {
-          enabled: false,
-          patterns: [],
-          excludePatterns: []
+          enabled: data.autoQueueEnabled,
+          patterns: data.autoQueuePatterns,
+          excludePatterns: data.autoQueueExcludePatterns
         },
         delugeAction: {
-          action: 'none' as const,
-          delay: 0
+          action: data.delugeAction,
+          delay: data.delugeDelay,
+          label: data.delugeLabel
         },
         parallelism: {
-          maxConcurrentTransfers: 3,
-          maxConnectionsPerTransfer: 2
+          maxConcurrentTransfers: data.maxConcurrentTransfers,
+          maxConnectionsPerTransfer: data.maxConnectionsPerTransfer
         }
       };
       
@@ -157,14 +169,14 @@ export default function JobsPage() {
     try {
       const transformedData = {
         name: data.name,
-        enabled: editingJob.enabled, // Keep current enabled state
+        enabled: data.enabled,
         serverProfileId: data.sourceServerId,
         targetType: data.targetType,
         targetServerId: data.targetServerId,
         remotePath: data.sourcePath,
         localPath: data.targetPath,
-        chmod: editingJob.chmod,
-        scanInterval: editingJob.scanInterval,
+        chmod: data.chmod,
+        scanInterval: data.scanInterval,
         syncOptions: {
           direction: data.direction,
           deleteExtraneous: data.deleteExtraneous,
@@ -177,18 +189,19 @@ export default function JobsPage() {
           maxRetries: data.maxRetries,
           retryDelay: data.retryDelay
         },
-        autoQueue: editingJob.autoQueue || {
-          enabled: false,
-          patterns: [],
-          excludePatterns: []
+        autoQueue: {
+          enabled: data.autoQueueEnabled,
+          patterns: data.autoQueuePatterns,
+          excludePatterns: data.autoQueueExcludePatterns
         },
-        delugeAction: editingJob.delugeAction || {
-          action: 'none' as const,
-          delay: 0
+        delugeAction: {
+          action: data.delugeAction,
+          delay: data.delugeDelay,
+          label: data.delugeLabel
         },
-        parallelism: editingJob.parallelism || {
-          maxConcurrentTransfers: 3,
-          maxConnectionsPerTransfer: 2
+        parallelism: {
+          maxConcurrentTransfers: data.maxConcurrentTransfers,
+          maxConnectionsPerTransfer: data.maxConnectionsPerTransfer
         }
       };
       
@@ -363,6 +376,7 @@ export default function JobsPage() {
           <JobForm
             initialData={editingJob ? {
               name: editingJob.name,
+              enabled: editingJob.enabled,
               sourceServerId: typeof editingJob.serverProfileId === 'object' && editingJob.serverProfileId && '_id' in editingJob.serverProfileId
                 ? String(editingJob.serverProfileId._id) 
                 : String(editingJob.serverProfileId),
@@ -374,6 +388,8 @@ export default function JobsPage() {
               ) : undefined,
               sourcePath: editingJob.remotePath,
               targetPath: editingJob.localPath,
+              chmod: editingJob.chmod,
+              scanInterval: editingJob.scanInterval,
               direction: editingJob.syncOptions?.direction || 'download',
               deleteExtraneous: editingJob.syncOptions?.deleteExtraneous || false,
               preserveTimestamps: editingJob.syncOptions?.preserveTimestamps || true,
@@ -382,6 +398,14 @@ export default function JobsPage() {
               dryRun: editingJob.syncOptions?.dryRun || false,
               maxRetries: editingJob.retrySettings?.maxRetries || 3,
               retryDelay: editingJob.retrySettings?.retryDelay || 5000,
+              autoQueueEnabled: editingJob.autoQueue?.enabled || false,
+              autoQueuePatterns: editingJob.autoQueue?.patterns || [],
+              autoQueueExcludePatterns: editingJob.autoQueue?.excludePatterns || [],
+              maxConcurrentTransfers: editingJob.parallelism?.maxConcurrentTransfers || 3,
+              maxConnectionsPerTransfer: editingJob.parallelism?.maxConnectionsPerTransfer || 5,
+              delugeAction: editingJob.delugeAction?.action || 'none',
+              delugeDelay: editingJob.delugeAction?.delay || 15,
+              delugeLabel: editingJob.delugeAction?.label || '',
             } : undefined}
             onSubmit={editingJob ? handleUpdateJob : handleCreateJob}
             onCancel={handleCloseJobForm}

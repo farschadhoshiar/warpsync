@@ -6,7 +6,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useFieldArray, Control } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,20 +18,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { FolderOpen } from 'lucide-react';
+import { FolderOpen, Plus, X, HelpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useServers } from '@/hooks/useServers';
 import DirectoryBrowserDialog from './directory-browser-dialog';
 
-// Simplified form validation schema
+// Comprehensive form validation schema with all job fields
 const syncJobSchema = z.object({
   name: z.string().min(1, 'Job name is required').max(100, 'Job name too long'),
   description: z.string().optional(),
+  enabled: z.boolean(),
   sourceServerId: z.string().min(1, 'Source server is required'),
   targetType: z.enum(['server', 'local']),
   targetServerId: z.string().optional(),
   sourcePath: z.string().min(1, 'Source path is required'),
   targetPath: z.string().min(1, 'Target path is required'),
+  chmod: z.string().regex(/^[0-7]{3,4}$/, 'Chmod must be a valid octal permission mode (e.g., 755, 644)'),
+  scanInterval: z.number().int().min(5, 'Scan interval must be at least 5 minutes').max(10080, 'Scan interval cannot exceed 10080 minutes (1 week)'),
   direction: z.enum(['download', 'upload', 'bidirectional']),
   deleteExtraneous: z.boolean(),
   preserveTimestamps: z.boolean(),
@@ -40,6 +43,12 @@ const syncJobSchema = z.object({
   dryRun: z.boolean(),
   maxRetries: z.number().min(0).max(10),
   retryDelay: z.number().min(1000).max(300000),
+  autoQueueEnabled: z.boolean(),
+  maxConcurrentTransfers: z.number().int().min(1, 'Max concurrent transfers must be at least 1').max(10, 'Max concurrent transfers cannot exceed 10'),
+  maxConnectionsPerTransfer: z.number().int().min(1, 'Max connections per transfer must be at least 1').max(20, 'Max connections per transfer cannot exceed 20'),
+  delugeAction: z.enum(['none', 'remove', 'remove_data', 'set_label']),
+  delugeDelay: z.number().int().min(0, 'Delay must be 0 or greater').max(1440, 'Delay cannot exceed 1440 minutes (24 hours)'),
+  delugeLabel: z.string().max(50, 'Label cannot exceed 50 characters').optional(),
 }).refine((data) => {
   if (data.targetType === 'server' && !data.targetServerId) {
     return false;
@@ -47,13 +56,21 @@ const syncJobSchema = z.object({
   if (data.targetType === 'server' && data.sourceServerId === data.targetServerId) {
     return false;
   }
+  if (data.delugeAction === 'set_label' && (!data.delugeLabel || data.delugeLabel.trim() === '')) {
+    return false;
+  }
   return true;
 }, {
-  message: "Target server is required when target type is server, and source and target servers must be different",
+  message: "Target server is required when target type is server, source and target servers must be different, and label is required when deluge action is set_label",
   path: ["targetServerId"]
 });
 
-type SyncJobFormData = z.infer<typeof syncJobSchema>;
+type SyncJobFormSchema = z.infer<typeof syncJobSchema>;
+
+interface SyncJobFormData extends SyncJobFormSchema {
+  autoQueuePatterns: string[];
+  autoQueueExcludePatterns: string[];
+}
 
 interface JobFormProps {
   initialData?: Partial<SyncJobFormData>;
@@ -88,18 +105,23 @@ export default function JobForm({
     watch,
     setValue,
     reset,
+    control,
     formState: { errors }
-  } = useForm<SyncJobFormData>({
+  } = useForm<SyncJobFormSchema>({
     resolver: zodResolver(syncJobSchema),
+    mode: 'onChange',
     defaultValues: {
       name: '',
       description: '',
+      enabled: true,
       sourceServerId: '',
       targetType: 'local' as const,
       targetServerId: '',
       sourcePath: '',
-      targetPath: '/data/local',
-      direction: 'download',
+      targetPath: '',
+      chmod: '755',
+      scanInterval: 60,
+      direction: 'download' as const,
       deleteExtraneous: false,
       preserveTimestamps: true,
       preservePermissions: true,
@@ -107,9 +129,42 @@ export default function JobForm({
       dryRun: false,
       maxRetries: 3,
       retryDelay: 5000,
-      ...initialData
+      autoQueueEnabled: false,
+      maxConcurrentTransfers: 3,
+      maxConnectionsPerTransfer: 5,
+      delugeAction: 'none' as const,
+      delugeDelay: 15,
+      delugeLabel: '',
     }
   });
+
+  const [autoQueuePatterns, setAutoQueuePatterns] = useState<string[]>([]);
+  const [autoQueueExcludePatterns, setAutoQueueExcludePatterns] = useState<string[]>([]);
+  
+  // Update state when form is reset with initialData
+  useEffect(() => {
+    if (initialData) {
+      setAutoQueuePatterns(initialData.autoQueuePatterns || []);
+      setAutoQueueExcludePatterns(initialData.autoQueueExcludePatterns || []);
+    }
+  }, [initialData]);
+
+  // Functions to manage patterns
+  const addPattern = () => setAutoQueuePatterns([...autoQueuePatterns, '']);
+  const removePattern = (index: number) => setAutoQueuePatterns(autoQueuePatterns.filter((_, i) => i !== index));
+  const updatePattern = (index: number, value: string) => {
+    const newPatterns = [...autoQueuePatterns];
+    newPatterns[index] = value;
+    setAutoQueuePatterns(newPatterns);
+  };
+
+  const addExcludePattern = () => setAutoQueueExcludePatterns([...autoQueueExcludePatterns, '']);
+  const removeExcludePattern = (index: number) => setAutoQueueExcludePatterns(autoQueueExcludePatterns.filter((_, i) => i !== index));
+  const updateExcludePattern = (index: number, value: string) => {
+    const newPatterns = [...autoQueueExcludePatterns];
+    newPatterns[index] = value;
+    setAutoQueueExcludePatterns(newPatterns);
+  };
   
   // Reset form when initialData changes (for editing)
   useEffect(() => {
@@ -124,14 +179,17 @@ export default function JobForm({
       });
       console.log('🔍 Raw sourceServerId type:', typeof initialData.sourceServerId);
       console.log('🔍 Raw sourceServerId value:', initialData.sourceServerId);
-      const resetData: Partial<SyncJobFormData> = {
+      const resetData: Partial<SyncJobFormSchema> = {
         name: '',
         description: '',
+        enabled: true,
         sourceServerId: '',
         targetType: 'local' as const,
         targetServerId: '',
         sourcePath: '',
         targetPath: '/data/local',
+        chmod: '755',
+        scanInterval: 60,
         direction: 'download' as const,
         deleteExtraneous: false,
         preserveTimestamps: true,
@@ -140,6 +198,12 @@ export default function JobForm({
         dryRun: false,
         maxRetries: 3,
         retryDelay: 5000,
+        autoQueueEnabled: false,
+        maxConcurrentTransfers: 3,
+        maxConnectionsPerTransfer: 5,
+        delugeAction: 'none' as const,
+        delugeDelay: 15,
+        delugeLabel: '',
         ...initialData
       };
       console.log('🔄 Reset data being applied:', resetData);
@@ -241,9 +305,15 @@ export default function JobForm({
     setDirectoryBrowser(null);
   };
   
-  const handleFormSubmit = async (data: SyncJobFormData) => {
+  const handleFormSubmit = async (data: SyncJobFormSchema) => {
     try {
-      await onSubmit(data);
+      // Include the local state arrays in the form data
+      const formDataWithArrays: SyncJobFormData = {
+        ...data,
+        autoQueuePatterns: autoQueuePatterns.filter(p => p.trim() !== ''),
+        autoQueueExcludePatterns: autoQueueExcludePatterns.filter(p => p.trim() !== '')
+      };
+      await onSubmit(formDataWithArrays);
     } catch (error) {
       console.error('Failed to save job:', error);
       // Show the actual error to the user
@@ -588,6 +658,267 @@ export default function JobForm({
           </CardContent>
         </Card>
         
+        {/* Job Settings */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Job Settings</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center space-x-2">
+              <Switch 
+                id="enabled"
+                checked={watch('enabled')}
+                onCheckedChange={(checked) => setValue('enabled', checked)}
+              />
+              <Label htmlFor="enabled">Job Enabled</Label>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="scanInterval">Scan Interval (minutes)</Label>
+                <Input 
+                  id="scanInterval"
+                  type="number" 
+                  min="5" 
+                  max="10080" 
+                  {...register('scanInterval', { valueAsNumber: true })}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  How often to scan for new files (5 minutes to 1 week)
+                </p>
+                {errors.scanInterval && (
+                  <p className="text-sm text-red-500 mt-1">{errors.scanInterval.message}</p>
+                )}
+              </div>
+              
+              <div>
+                <Label htmlFor="chmod">File Permissions (chmod)</Label>
+                <Input 
+                  id="chmod"
+                  placeholder="755" 
+                  {...register('chmod')}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Octal permission mode (e.g., 755, 644)
+                </p>
+                {errors.chmod && (
+                  <p className="text-sm text-red-500 mt-1">{errors.chmod.message}</p>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        
+        {/* Auto-Queue Configuration */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Auto-Queue Configuration
+              <HelpCircle className="h-4 w-4 text-muted-foreground" />
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center space-x-2">
+              <Switch 
+                id="autoQueueEnabled"
+                checked={watch('autoQueueEnabled')}
+                onCheckedChange={(checked) => setValue('autoQueueEnabled', checked)}
+              />
+              <Label htmlFor="autoQueueEnabled">Enable Auto-Queue</Label>
+            </div>
+            
+            {watch('autoQueueEnabled') && (
+              <>
+                <div>
+                  <Label>Include Patterns</Label>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Files matching these patterns will be automatically queued for transfer
+                  </p>
+                  {autoQueuePatterns.map((pattern, index) => (
+                    <div key={index} className="flex gap-2 mb-2">
+                      <Input
+                        placeholder="*.mkv, *.mp4, complete/*"
+                        value={pattern}
+                        onChange={(e) => updatePattern(index, e.target.value)}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removePattern(index)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => addPattern()}
+                  >
+                    <Plus className="h-4 w-4 mr-1" />
+                    Add Pattern
+                  </Button>
+                </div>
+                
+                <div>
+                  <Label>Exclude Patterns</Label>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Files matching these patterns will be excluded from auto-queue
+                  </p>
+                  {autoQueueExcludePatterns.map((pattern, index) => (
+                    <div key={index} className="flex gap-2 mb-2">
+                      <Input
+                        placeholder="*.tmp, *.part, .incomplete/*"
+                        value={pattern}
+                        onChange={(e) => updateExcludePattern(index, e.target.value)}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removeExcludePattern(index)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => addExcludePattern()}
+                  >
+                    <Plus className="h-4 w-4 mr-1" />
+                    Add Exclude Pattern
+                  </Button>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+        
+        {/* Transfer Parallelism */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Transfer Parallelism
+              <HelpCircle className="h-4 w-4 text-muted-foreground" />
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="maxConcurrentTransfers">Max Concurrent Transfers</Label>
+                <Input 
+                  id="maxConcurrentTransfers"
+                  type="number" 
+                  min="1" 
+                  max="10" 
+                  {...register('maxConcurrentTransfers', { valueAsNumber: true })}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Maximum number of files transferring simultaneously
+                </p>
+                {errors.maxConcurrentTransfers && (
+                  <p className="text-sm text-red-500 mt-1">{errors.maxConcurrentTransfers.message}</p>
+                )}
+              </div>
+              
+              <div>
+                <Label htmlFor="maxConnectionsPerTransfer">Max Connections Per Transfer</Label>
+                <Input 
+                  id="maxConnectionsPerTransfer"
+                  type="number" 
+                  min="1" 
+                  max="20" 
+                  {...register('maxConnectionsPerTransfer', { valueAsNumber: true })}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Maximum connections for each individual file transfer
+                </p>
+                {errors.maxConnectionsPerTransfer && (
+                  <p className="text-sm text-red-500 mt-1">{errors.maxConnectionsPerTransfer.message}</p>
+                )}
+              </div>
+            </div>
+            <Alert>
+              <AlertDescription>
+                Higher values may improve transfer speed but will use more system resources and network connections.
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+        </Card>
+        
+        {/* Deluge Integration */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Deluge Integration
+              <HelpCircle className="h-4 w-4 text-muted-foreground" />
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <Label htmlFor="delugeAction">Post-Transfer Action</Label>
+              <Select 
+                value={watch('delugeAction') || 'none'}
+                onValueChange={(value) => setValue('delugeAction', value as 'none' | 'remove' | 'remove_data' | 'set_label')}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select action" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Do Nothing</SelectItem>
+                  <SelectItem value="remove">Remove Torrent (Keep Data)</SelectItem>
+                  <SelectItem value="remove_data">Remove Torrent and Data</SelectItem>
+                  <SelectItem value="set_label">Set Label/Category</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                Action to perform in Deluge after successful file transfer
+              </p>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="delugeDelay">Delay (minutes)</Label>
+                <Input 
+                  id="delugeDelay"
+                  type="number" 
+                  min="0" 
+                  max="1440" 
+                  {...register('delugeDelay', { valueAsNumber: true })}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Wait time before executing the action (0-1440 minutes)
+                </p>
+                {errors.delugeDelay && (
+                  <p className="text-sm text-red-500 mt-1">{errors.delugeDelay.message}</p>
+                )}
+              </div>
+              
+              {watch('delugeAction') === 'set_label' && (
+                <div>
+                  <Label htmlFor="delugeLabel">Label</Label>
+                  <Input 
+                    id="delugeLabel"
+                    placeholder="completed"
+                    {...register('delugeLabel')}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Label to set in Deluge (required for set_label action)
+                  </p>
+                  {errors.delugeLabel && (
+                    <p className="text-sm text-red-500 mt-1">{errors.delugeLabel.message}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+        
         {/* Advanced Options */}
         <Card>
           <CardHeader>
@@ -625,6 +956,24 @@ export default function JobForm({
             </div>
           </CardContent>
         </Card>
+        
+        {/* Form Actions */}
+        <div className="flex justify-end space-x-2 pt-4">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onCancel}
+            disabled={isLoading}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            disabled={isLoading}
+          >
+            {isLoading ? 'Saving...' : (isEditing ? 'Update Job' : 'Create Job')}
+          </Button>
+        </div>
         
       </form>
       
