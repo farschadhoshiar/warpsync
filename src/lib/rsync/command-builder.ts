@@ -49,91 +49,16 @@ export class RsyncCommandBuilder {
     // Add source and destination with path escaping details
     const { source, destination } = this.formatPaths(config);
 
-    // Enhanced path logging for debugging
-    if (isDevelopment) {
-      devLogger.info("🔧 PATH CONSTRUCTION DETAILS (DEV)", {
-        originalSource: config.source,
-        originalDestination: config.destination,
-        escapedSource: source,
-        escapedDestination: destination,
-        pathAnalysis: {
-          sourceHasSpaces: config.source.includes(" "),
-          destinationHasSpaces: config.destination.includes(" "),
-          sourceHasSpecialChars: /[\\$`"\s';&|<>(){}[\]?*~]/.test(
-            config.source,
-          ),
-          destinationHasSpecialChars: /[\\$`"\s';&|<>(){}[\]?*~]/.test(
-            config.destination,
-          ),
-          isSSHTransfer: !!config.sshConfig,
-          escapeMethod: config.sshConfig
-            ? "escapeRsyncSSHPath"
-            : "escapeShellArg",
-        },
-        characterBreakdown: {
-          sourceLength: config.source.length,
-          escapedSourceLength: source.length,
-          destinationLength: config.destination.length,
-          escapedDestinationLength: destination.length,
-        },
-      });
-
-      // Character-by-character analysis for paths with spaces
-      if (config.source.includes(" ") || config.destination.includes(" ")) {
-        devLogger.info("🔍 CHARACTER ANALYSIS FOR SPACED PATHS (DEV)", {
-          sourceCharacters: config.source.split("").map((char, i) => ({
-            index: i,
-            char: char,
-            code: char.charCodeAt(0),
-            isSpace: char === " ",
-            isSpecial: /[\\$`"\s';&|<>(){}[\]?*~]/.test(char),
-          })),
-          escapedSourceCharacters: (config.sshConfig
-            ? source.split(":")[1] || source
-            : source
-          )
-            .split("")
-            .map((char, i) => ({
-              index: i,
-              char: char,
-              code: char.charCodeAt(0),
-              isBackslash: char === "\\",
-              isSpace: char === " ",
-            })),
-        });
-      }
-    }
-
     args.push(source, destination);
 
     if (isDevelopment) {
-      // Development: Log full command for debugging including path transformations
+      // Development: Log simplified command info
       logger.info("🔧 RSYNC COMMAND BUILT (DEV)", {
-        fullCommand: args.join(" "),
-        fullArgs: args,
-        sanitizedArgs: this.sanitizeArgs(args),
-        sanitizedCommand: this.sanitizeArgs(args).join(" "),
-        tempKeyFile: tempKeyFilePath,
-        pathTransformations: {
-          originalSource: config.source,
-          originalDestination: config.destination,
-          escapedSource: source,
-          escapedDestination: destination,
-          hasSpaces:
-            config.source.includes(" ") || config.destination.includes(" "),
-          isSSH: !!config.sshConfig,
-        },
-        commandBreakdown: {
-          program: "rsync",
-          totalArgs: args.length - 1,
-          hasSSH: !!config.sshConfig,
-          source: config.source,
-          destination: config.destination,
-          sshHost: config.sshConfig?.host,
-          sshPort: config.sshConfig?.port,
-          sshUser: config.sshConfig?.username,
-          allArguments: args,
-        },
+        command: this.sanitizeArgs(args).join(" "),
+        hasSpaces:
+          config.source.includes(" ") || config.destination.includes(" "),
+        isSSH: !!config.sshConfig,
+        host: config.sshConfig?.host,
       });
     } else {
       // Production: Log sanitized command only
@@ -365,21 +290,11 @@ export class RsyncCommandBuilder {
       const { host, username } = config.sshConfig;
       const escapedPath = escapeRsyncSSHPath(config.source);
 
-      if (isDevelopment) {
+      if (isDevelopment && config.source.includes(" ")) {
         devLogger.info("🌐 SSH SOURCE PATH ESCAPING (DEV)", {
           originalPath: config.source,
           escapedPath: escapedPath,
           sshHost: host,
-          sshUsername: username,
-          fullSSHSource: `${username}@${host}:${escapedPath}`,
-          escapingDetails: {
-            beforeEscape: config.source,
-            afterEscape: escapedPath,
-            escapeFunction: "escapeRsyncSSHPath",
-            hasSpaces: config.source.includes(" "),
-            charactersEscaped: config.source.length !== escapedPath.length,
-            lengthChange: escapedPath.length - config.source.length,
-          },
         });
       }
 
@@ -388,13 +303,10 @@ export class RsyncCommandBuilder {
     } else {
       const escapedSource = escapeShellArg(config.source);
 
-      if (isDevelopment) {
+      if (isDevelopment && config.source.includes(" ")) {
         devLogger.info("💻 LOCAL SOURCE PATH ESCAPING (DEV)", {
           originalPath: config.source,
           escapedPath: escapedSource,
-          escapeFunction: "escapeShellArg",
-          hasSpaces: config.source.includes(" "),
-          charactersEscaped: config.source !== escapedSource,
         });
       }
 
@@ -405,13 +317,10 @@ export class RsyncCommandBuilder {
     // Local paths use standard shell escaping
     const escapedDestination = escapeShellArg(config.destination);
 
-    if (isDevelopment) {
+    if (isDevelopment && config.destination.includes(" ")) {
       devLogger.info("📁 DESTINATION PATH ESCAPING (DEV)", {
         originalPath: config.destination,
         escapedPath: escapedDestination,
-        escapeFunction: "escapeShellArg",
-        hasSpaces: config.destination.includes(" "),
-        charactersEscaped: config.destination !== escapedDestination,
       });
     }
 

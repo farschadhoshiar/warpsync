@@ -243,56 +243,9 @@ export class RsyncManager {
         const destArg = programArgs[programArgs.length - 1];
 
         devLogger.info("🚀 EXECUTING RSYNC (DEV)", {
-          fullCommand: args.join(" "),
-          fullArgs: args,
-          sanitizedArgs: this.sanitizeArgs(args),
-          sanitizedCommand: this.sanitizeArgs(args).join(" "),
-          program,
-          argsCount: programArgs.length,
-          commandBreakdown: {
-            executable: program,
-            arguments: programArgs.slice(0, 15), // Show more args for debugging
-            totalArguments: programArgs.length,
-            fullArgumentsList: programArgs,
-            sourceDestinationArgs: {
-              source: sourceArg,
-              destination: destArg,
-              sourceHasSpaces: sourceArg?.includes(" "),
-              destinationHasSpaces: destArg?.includes(" "),
-            },
-          },
-          execDetails: {
-            workingDirectory: process.cwd(),
-            nodeVersion: process.version,
-            platform: process.platform,
-            execPath: process.execPath,
-          },
-          argumentAnalysis: programArgs.map((arg, index) => ({
-            index,
-            argument: arg,
-            length: arg.length,
-            hasSpaces: arg.includes(" "),
-            hasSpecialChars: /[\\$`"\s';&|<>(){}[\]?*~]/.test(arg),
-            startsWithDash: arg.startsWith("-"),
-            isPathLike: arg.includes("/") || arg.includes("\\"),
-            containsHost: arg.includes("@") && arg.includes(":"),
-          })),
-        });
-
-        // Additional logging for command that will be executed
-        devLogger.info("📋 EXACT COMMAND EXECUTION (DEV)", {
-          executablePath: program,
-          argumentsArray: programArgs,
-          commandAsString: `${program} ${programArgs.join(" ")}`,
-          spawnOptions: {
-            stdio: ["ignore", "pipe", "pipe"],
-          },
-          processEnvironment: {
-            NODE_ENV: process.env.NODE_ENV,
-            PATH: process.env.PATH?.substring(0, 200) + "...",
-            HOME: process.env.HOME,
-            USER: process.env.USER,
-          },
+          command: this.sanitizeArgs(args).join(" "),
+          hasSpaces: sourceArg?.includes(" ") || destArg?.includes(" "),
+          host: config.sshConfig?.host,
         });
       } else {
         logger.info("🚀 EXECUTING RSYNC", {
@@ -339,12 +292,16 @@ export class RsyncManager {
         const lines = data.toString().split("\n");
         stdout += data.toString();
 
-        if (isDevelopment && lines.some((line) => line.trim())) {
-          devLogger.info("📤 RSYNC STDOUT (DEV)", {
+        // Only log stdout for progress or significant events
+        if (
+          isDevelopment &&
+          lines.some(
+            (line) => line.includes("receiving") || line.includes("sending"),
+          )
+        ) {
+          devLogger.info("📤 RSYNC PROGRESS (DEV)", {
             processId,
-            rawData: data.toString(),
-            lines: lines.filter((line) => line.trim()),
-            dataLength: data.length,
+            status: lines.filter((line) => line.trim())[0],
           });
         }
 
@@ -388,56 +345,17 @@ export class RsyncManager {
         stderr += errorLine + "\n";
         rsyncProcess.errors.push(errorLine);
 
-        // Enhanced stderr logging for debugging
+        // Simplified stderr logging
         if (isDevelopment) {
-          devLogger.error("⚠️ RSYNC STDERR (DEV)", {
+          devLogger.error("⚠️ RSYNC ERROR (DEV)", {
             processId,
             error: errorLine,
-            fullError: errorLine,
-            rawStderr: data.toString(),
-            errorLength: errorLine.length,
-            args: this.sanitizeArgs(args),
-            fullCommand: args.join(" "),
-            fullArgs: args,
-            errorAnalysis: {
-              containsNoSuchFile: errorLine
-                .toLowerCase()
-                .includes("no such file"),
-              containsPermissionDenied: errorLine
-                .toLowerCase()
-                .includes("permission denied"),
-              containsConnectionRefused: errorLine
-                .toLowerCase()
-                .includes("connection refused"),
-              containsHostUnreachable: errorLine
-                .toLowerCase()
-                .includes("host unreachable"),
-              containsInvalidArgument: errorLine
-                .toLowerCase()
-                .includes("invalid argument"),
-              containsCommandNotFound: errorLine
-                .toLowerCase()
-                .includes("command not found"),
-              containsSSHError: errorLine.toLowerCase().includes("ssh"),
-              containsRsyncError: errorLine.toLowerCase().includes("rsync"),
-              containsPathReference:
-                errorLine.includes("/") || errorLine.includes("\\"),
-              errorType: this.categorizeError(errorLine),
-            },
-            commandContext: {
-              sourceArg: args[args.length - 2],
-              destArg: args[args.length - 1],
-              hasSpacesInSource: args[args.length - 2]?.includes(" "),
-              hasSpacesInDest: args[args.length - 1]?.includes(" "),
-            },
+            errorType: this.categorizeError(errorLine),
           });
         } else {
           logger.error("⚠️ RSYNC STDERR", {
             processId,
             error: errorLine,
-            fullError: errorLine,
-            args: this.sanitizeArgs(args),
-            fullCommand: "[HIDDEN IN PRODUCTION]",
           });
         }
 

@@ -35,21 +35,17 @@ export function escapeShellArg(arg: string): string {
 /**
  * Escape paths for rsync over SSH
  * Rsync over SSH requires different escaping than general shell commands
- * Uses quoted paths for better compatibility with spaces and special characters
+ * Uses double backslash escaping to handle both local and remote shell layers
  */
 export function escapeRsyncSSHPath(path: string): string {
-  // For rsync over SSH, use single quotes to wrap the entire path
-  // This is more reliable than backslash escaping for paths with spaces
-  // Single quotes preserve all characters literally except for single quotes themselves
+  // For rsync over SSH, we need double escaping because:
+  // 1. Local shell processes the first level of escaping
+  // 2. Remote shell (via SSH) processes the second level
+  // 3. Final path is correctly unescaped on the remote system
 
-  // If the path contains single quotes, we need to escape them specially
-  if (path.includes("'")) {
-    // Replace each single quote with '\'' (end quote, escaped quote, start quote)
-    return "'" + path.replace(/'/g, "'\\''") + "'";
-  }
-
-  // For paths without single quotes, simply wrap in single quotes
-  return "'" + path + "'";
+  // Characters that need escaping: space, backslash, dollar, backtick, double quote, single quote,
+  // semicolon, ampersand, pipe, redirects, parentheses, braces, brackets, wildcards, tilde
+  return path.replace(/([\\$`"\s';&|<>(){}[\]?*~])/g, "\\\\$1");
 }
 
 /**
