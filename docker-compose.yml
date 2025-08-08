@@ -1,40 +1,79 @@
-# Docker Compose Production Override
-# This file provides production-specific configuration
-# Copy to docker-compose.override.yml and customize for your deployment
-
 version: '3.8'
 
 services:
-  app:
-    image: aa42aa3571f0acc5d3b6129cdf461c245aa187cae67854b8c2878f39f679449c 
-    # Production-specific environment overrides
-    environment:
-      # Override local data path if needed
-      WARPSYNC_LOCAL_DATA_PATH: /app/data/local
-      MONGODB_URI: 'mongodb://admin:ChangeMe%211@195.201.91.38:27017/warpsync?directConnection=true&authSource=admin'
-
-    volumes:
-      # Customize these volume mappings for your production environment
-      # Example: Map your media server storage to the container
-      # - /mnt/storage/media:/app/data/local
-      # - /var/log/warpsync:/app/logs
-      
-      # Default mappings (customize these)
-      - ./data/local:/Users/farschadhoshiar/Documents/media
-      - ./logs:/app/logs
-
-    ports:
-      - "3000:3000"  # Expose app on port 3000
-    
-    # Health check for production monitoring
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  # Remove MongoDB dependency for production (using external database)
+  # MongoDB database service
   mongodb:
-    profiles:
-      - disabled
+    image: mongo:7
+    container_name: warpsync-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: warpsync
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./docker/mongo-init:/docker-entrypoint-initdb.d
+    networks:
+      - warpsync-network
+
+  # WarpSync application service
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: warpsync-app
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: mongodb://admin:password@mongodb:27017/warpsync?authSource=admin
+      NEXTAUTH_SECRET: your-secret-key-here
+      NEXTAUTH_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount volumes for file synchronization
+      - ./data/local:/app/data/local
+      - ./data/remote:/app/data/remote
+      - ./logs:/app/logs
+    depends_on:
+      - mongodb
+    networks:
+      - warpsync-network
+
+  # Development service with hot reload
+  app-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: warpsync-app-dev
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      MONGODB_URI: mongodb://admin:password@mongodb:27017/warpsync?authSource=admin
+      NEXTAUTH_SECRET: your-secret-key-here
+      NEXTAUTH_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount source code for development hot reload
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+      # Mount volumes for file synchronization
+      - ./data/local:/app/data/local
+      - ./data/remote:/app/data/remote
+      - ./logs:/app/logs
+    depends_on:
+      - mongodb
+    networks:
+      - warpsync-network
+
+volumes:
+  mongodb_data:
+    driver: local
+
+networks:
+  warpsync-network:
+    driver: bridge
