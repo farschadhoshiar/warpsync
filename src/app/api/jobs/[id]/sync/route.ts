@@ -117,10 +117,8 @@ export const POST = withErrorHandler(async (req: NextRequest, { params }: { para
         }, { status: 400 });
       }
 
-      // Build SSH config
-      const serverAuth = serverProfile.authMethod === 'password' 
-        ? { password: serverProfile.password }
-        : { privateKey: serverProfile.privateKey };
+      // Build SSH config (SSH key authentication only)
+      const serverAuth = { privateKey: serverProfile.privateKey || '' };
 
       // Enqueue files for transfer
       for (const file of filesToSync) {

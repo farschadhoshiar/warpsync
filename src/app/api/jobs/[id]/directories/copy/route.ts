@@ -146,10 +146,7 @@ export const POST = withErrorHandler(async (req: NextRequest, { params }: { para
           host: serverProfile.address,
           port: serverProfile.port,
           username: serverProfile.user,
-          ...(serverProfile.authMethod === 'password' 
-            ? { password: serverProfile.password }
-            : { privateKey: serverProfile.privateKey }
-          )
+          privateKey: serverProfile.privateKey || ''
         },
         rsyncOptions: {
           archive: true,
@@ -192,10 +189,7 @@ export const POST = withErrorHandler(async (req: NextRequest, { params }: { para
           host: serverProfile.address,
           port: serverProfile.port,
           username: serverProfile.user,
-          ...(serverProfile.authMethod === 'password' 
-            ? { password: serverProfile.password }
-            : { privateKey: serverProfile.privateKey }
-          )
+          privateKey: serverProfile.privateKey || ''
         },
         rsyncOptions: {
           archive: true,

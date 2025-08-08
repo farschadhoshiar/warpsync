@@ -13,8 +13,7 @@ export interface TransferJob {
     host: string;
     port: number;
     username: string;
-    privateKey?: string;
-    password?: string;
+    privateKey: string;  // SSH private key content (required for SSH key auth only)
   };
   rsyncOptions?: Record<string, string | number | boolean>;
   createdAt: Date;
@@ -32,7 +31,8 @@ export enum TransferType {
   DOWNLOAD = 'download',
   UPLOAD = 'upload',
   SYNC = 'sync',
-  DIRECTORY = 'directory'
+  DIRECTORY = 'directory',
+  DIRECTORY_PACKAGE = 'directory_package'
 }
 
 export enum TransferPriority {

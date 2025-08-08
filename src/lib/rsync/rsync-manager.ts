@@ -3,6 +3,7 @@ import { logger } from '@/lib/logger';
 import { EventEmitter } from '../websocket/emitter';
 import { RsyncCommandBuilder } from './command-builder';
 import { RsyncProgressParser } from './progress-parser';
+import { SSHKeyManager } from '../ssh/key-manager';
 import { 
   RsyncConfig, 
   RsyncProcess, 
@@ -63,23 +64,27 @@ export class RsyncManager {
     this.processes.set(processId, process);
 
     try {
-      // Build rsync command
-      const command = RsyncCommandBuilder.buildCommand(config);
+      // Build rsync command with temporary SSH key file
+      const { args, tempKeyFilePath } = await RsyncCommandBuilder.buildCommandWithKeyFile(config);
+      
+      // Store temporary key file path for cleanup
+      process.tempKeyFilePath = tempKeyFilePath;
       
       logger.info('Starting rsync transfer', {
         processId,
         jobId,
         fileId,
-        command: this.sanitizeCommand(command),
+        args: this.sanitizeArgs(args),
         source: config.source,
         destination: config.destination,
         sshHost: config.sshConfig?.host,
         sshUsername: config.sshConfig?.username,
-        sshPort: config.sshConfig?.port
+        sshPort: config.sshConfig?.port,
+        hasTempKeyFile: !!tempKeyFilePath
       });
 
       // Start the process
-      await this.executeRsync(processId, command, jobId, fileId);
+      await this.executeRsync(processId, args, jobId, fileId);
       
       return processId;
     } catch (error) {
@@ -93,6 +98,11 @@ export class RsyncManager {
         duration: Date.now() - process.startTime.getTime(),
         error: error instanceof Error ? error.message : 'Unknown error'
       };
+
+      // Cleanup temporary SSH key file on error
+      if (process.tempKeyFilePath) {
+        await SSHKeyManager.cleanupKeyFile(process.tempKeyFilePath);
+      }
 
       logger.error('Failed to start rsync transfer', {
         processId,
@@ -192,7 +202,7 @@ export class RsyncManager {
 
   private async executeRsync(
     processId: string,
-    command: string,
+    args: string[],
     jobId: string,
     fileId: string
   ): Promise<void> {
@@ -202,31 +212,52 @@ export class RsyncManager {
     return new Promise((resolve, reject) => {
       rsyncProcess.status = ProcessStatus.STARTING;
       
-      // Detect if using password authentication
-      const usesPasswordAuth = rsyncProcess.config.sshConfig?.password && !rsyncProcess.config.sshConfig?.privateKey;
+      // Extract program and arguments directly from args array
+      const [program, ...programArgs] = args;
       
-      let childProcess;
+      // Enhanced execution logging
+      const isDevelopment = process.env.NODE_ENV === 'development';
       
-      if (usesPasswordAuth) {
-        // Use shell execution for sshpass commands
-        childProcess = spawn(command, [], {
-          shell: true,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env, SSHPASS: rsyncProcess.config.sshConfig!.password }
+      if (isDevelopment) {
+        logger.info('🚀 EXECUTING RSYNC (DEV)', {
+          fullCommand: args.join(' '),
+          fullArgs: args,
+          sanitizedArgs: this.sanitizeArgs(args),
+          sanitizedCommand: this.sanitizeArgs(args).join(' '),
+          program,
+          argsCount: programArgs.length,
+          commandBreakdown: {
+            executable: program,
+            arguments: programArgs.slice(0, 15), // Show more args for debugging
+            totalArguments: programArgs.length,
+            fullArgumentsList: programArgs
+          }
         });
       } else {
-        // Use direct spawn for key-based authentication
-        const parts = command.split(' ');
-        const program = parts[0];
-        const args = parts.slice(1);
-        
-        childProcess = spawn(program, args, {
-          stdio: ['ignore', 'pipe', 'pipe']
+        logger.info('🚀 EXECUTING RSYNC', {
+          command: this.sanitizeArgs(args).join(' '),
+          args: this.sanitizeArgs(args),
+          program,
+          argCount: programArgs.length
         });
       }
+      
+      const childProcess = spawn(program, programArgs, {
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
 
       // Store child process reference for cancellation
       (rsyncProcess as RsyncProcess & { childProcess?: ChildProcess }).childProcess = childProcess;
+
+      // Handle spawn errors immediately
+      childProcess.on('error', (error) => {
+        logger.error('🚨 RSYNC SPAWN ERROR', {
+          error: error.message,
+          args: this.sanitizeArgs(args),
+          program,
+          processId
+        });
+      });
 
       let stdout = '';
       let stderr = '';
@@ -281,9 +312,18 @@ export class RsyncManager {
 
       // Handle stderr (errors)
       childProcess.stderr?.on('data', (data: Buffer) => {
-        const errorLine = data.toString();
-        stderr += errorLine;
+        const errorLine = data.toString().trim();
+        stderr += errorLine + '\n';
         rsyncProcess.errors.push(errorLine);
+        
+        // Immediate stderr logging for debugging
+        logger.error('⚠️ RSYNC STDERR', {
+          processId,
+          error: errorLine,
+          fullError: errorLine,
+          args: this.sanitizeArgs(args),
+          fullCommand: isDevelopment ? args.join(' ') : '[HIDDEN IN PRODUCTION]'
+        });
         
         this.eventEmitter?.emitLogMessage({
           jobId,
@@ -301,6 +341,16 @@ export class RsyncManager {
         
         const duration = rsyncProcess.endTime.getTime() - rsyncProcess.startTime.getTime();
         const success = exitCode === 0;
+        
+        logger.info(`🏁 RSYNC ${success ? 'SUCCESS' : 'FAILED'}`, {
+          processId,
+          exitCode,
+          duration: `${duration}ms`,
+          stdout: stdout.length > 0 ? stdout : '(no output)',
+          stderr: stderr.length > 0 ? stderr : '(no errors)',
+          command: isDevelopment ? args.join(' ') : this.sanitizeArgs(args).join(' '),
+          success
+        });
         
         rsyncProcess.status = success ? ProcessStatus.COMPLETED : ProcessStatus.FAILED;
         rsyncProcess.result = {
@@ -325,15 +375,36 @@ export class RsyncManager {
           stderr: stderr.substring(0, 500)  // First 500 chars of stderr
         });
 
+        // Cleanup temporary SSH key file
+        if (rsyncProcess.tempKeyFilePath) {
+          SSHKeyManager.cleanupKeyFile(rsyncProcess.tempKeyFilePath).catch(error => {
+            logger.warn('Failed to cleanup temporary SSH key file', {
+              processId,
+              keyFilePath: rsyncProcess.tempKeyFilePath,
+              error: error instanceof Error ? error.message : 'Unknown error'
+            });
+          });
+        }
+
         if (success) {
           resolve();
         } else {
-          logger.error('Rsync failed with details', {
+          logger.error('❌ RSYNC COMMAND FAILED', {
             processId,
+            command: isDevelopment ? args.join(' ') : this.sanitizeArgs(args).join(' '),
+            args: this.sanitizeArgs(args),
+            fullArgs: isDevelopment ? args : '[HIDDEN IN PRODUCTION]',
             exitCode,
-            stdout,
-            stderr,
-            command: 'rsync command was executed'
+            stderr: stderr || 'No error details',
+            errorLines: rsyncProcess.errors.length,
+            duration: `${duration}ms`,
+            allErrors: rsyncProcess.errors,
+            failureDetails: {
+              hasStderr: stderr.length > 0,
+              stderrLength: stderr.length,
+              lastError: rsyncProcess.errors[rsyncProcess.errors.length - 1] || 'No specific error',
+              firstError: rsyncProcess.errors[0] || 'No specific error'
+            }
           });
           reject(new Error(`Rsync failed with exit code ${exitCode}: ${stderr}`));
         }
@@ -345,10 +416,31 @@ export class RsyncManager {
         rsyncProcess.status = ProcessStatus.FAILED;
         rsyncProcess.endTime = new Date();
         
-        logger.error('Rsync process error', {
+        // Enhanced process error logging
+        logger.error('💥 RSYNC PROCESS ERROR', {
           processId,
-          error: error.message
+          errorType: error.name,
+          errorMessage: error.message,
+          args: this.sanitizeArgs(args),
+          fullArgs: isDevelopment ? args : '[HIDDEN IN PRODUCTION]',
+          errorDetails: {
+            code: (error as any).code,
+            errno: (error as any).errno,
+            syscall: (error as any).syscall,
+            path: (error as any).path
+          }
         });
+        
+        // Cleanup temporary SSH key file on error
+        if (rsyncProcess.tempKeyFilePath) {
+          SSHKeyManager.cleanupKeyFile(rsyncProcess.tempKeyFilePath).catch(cleanupError => {
+            logger.warn('Failed to cleanup temporary SSH key file on error', {
+              processId,
+              keyFilePath: rsyncProcess.tempKeyFilePath,
+              cleanupError: cleanupError instanceof Error ? cleanupError.message : 'Unknown error'
+            });
+          });
+        }
         
         reject(error);
       });
@@ -361,11 +453,20 @@ export class RsyncManager {
     ).length;
   }
 
+  private sanitizeArgs(args: string[]): string[] {
+    // Remove sensitive information from args for logging
+    return args.map(arg => {
+      // Replace private key file paths with placeholder
+      if (arg.match(/^\/.*\.key$|^\/tmp\/.*$/)) {
+        return '[PRIVATE_KEY_FILE]';
+      }
+      return arg;
+    });
+  }
+
   private sanitizeCommand(command: string): string {
     // Remove sensitive information from command for logging
     return command
-      .replace(/(-i\s+)[^\s]+/g, '$1[PRIVATE_KEY]')
-      .replace(/password[^\s]*/gi, '[PASSWORD]')
-      .replace(/SSHPASS=[^\s]*/gi, 'SSHPASS=[PASSWORD]');
+      .replace(/(-i\s+)[^\s]+/g, '$1[PRIVATE_KEY_FILE]');
   }
 }

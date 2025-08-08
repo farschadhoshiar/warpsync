@@ -166,10 +166,13 @@ const TreeNode: React.FC<TreeNodeProps> = ({
     }
   };
 
-  const handleDownload = async () => {
+  const handleDownload = async (retryCount = 0) => {
     if (isDownloading) return;
     
-    console.log('Starting download for file:', node.id, node.name);
+    const maxRetries = 3;
+    const baseDelay = 1000; // 1 second
+    
+    console.log('Starting download for file:', node.id, node.name, retryCount > 0 ? `(retry ${retryCount})` : '');
     setIsDownloading(true);
     setDownloadProgress(0);
     
@@ -178,9 +181,11 @@ const TreeNode: React.FC<TreeNodeProps> = ({
         fileId: node.id,
         jobId: jobId || 'unknown',
         filename: node.name,
+        isDirectory: node.isDirectory,
         hasJobId: !!jobId,
         jobIdLength: jobId?.length,
-        isValidObjectId: jobId && /^[0-9a-fA-F]{24}$/.test(jobId)
+        isValidObjectId: jobId && /^[0-9a-fA-F]{24}$/.test(jobId),
+        retryAttempt: retryCount
       });
       
       // Debug: Check job data first
@@ -194,61 +199,115 @@ const TreeNode: React.FC<TreeNodeProps> = ({
         }
       }
       
-      const response = await fetch('/api/files/download', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          fileId: node.id,
-          jobId: jobId || 'unknown',
-          priority: 'HIGH'
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Download API error response:', {
-          status: response.status,
-          statusText: response.statusText,
-          body: errorText,
-          url: response.url,
-          headers: Object.fromEntries(response.headers.entries())
-        });
-        
-        let errorData;
-        try {
-          errorData = JSON.parse(errorText);
-          console.log('Parsed error data:', errorData);
-        } catch (parseError) {
-          console.error('Failed to parse error response as JSON:', parseError);
-          errorData = { error: errorText || 'Download request failed' };
-        }
-        
-        const errorMessage = errorData.error || errorData.message || `HTTP ${response.status}: ${response.statusText}` || 'Download request failed';
-        console.error('Final error message:', errorMessage);
-        throw new Error(errorMessage);
-      }
-
-      const data = await response.json();
-      console.log('Download API response:', data);
+      // Add timeout for large files/directories
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 seconds
       
-      if (data.success) {
-        setTransferId(data.data.transferId);
-        console.log('Download queued successfully, transferId:', data.data.transferId);
-        toast.success('Download started', {
-          description: `${node.name} has been queued for download`
+      try {
+        const response = await fetch('/api/files/download', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            fileId: node.id,
+            jobId: jobId || 'unknown',
+            priority: 'HIGH'
+          }),
+          signal: controller.signal
         });
-      } else {
-        throw new Error(data.error || 'Failed to queue download');
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('Download API error response:', {
+            status: response.status,
+            statusText: response.statusText,
+            body: errorText,
+            url: response.url,
+            headers: Object.fromEntries(response.headers.entries())
+          });
+          
+          let errorData;
+          try {
+            errorData = JSON.parse(errorText);
+            console.log('Parsed error data:', errorData);
+          } catch (parseError) {
+            console.error('Failed to parse error response as JSON:', parseError);
+            errorData = { error: errorText || 'Download request failed' };
+          }
+          
+          const errorMessage = errorData.error || errorData.message || `HTTP ${response.status}: ${response.statusText}` || 'Download request failed';
+          console.error('Final error message:', errorMessage);
+          throw new Error(errorMessage);
+        }
+
+        const data = await response.json();
+        console.log('Download API response:', data);
+        
+        if (data.success) {
+          setTransferId(data.data.transferId);
+          console.log('Download queued successfully, transferId:', data.data.transferId);
+          toast.success('Download started', {
+            description: `${node.name} has been queued for download`
+          });
+        } else {
+          throw new Error(data.error || 'Failed to queue download');
+        }
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        throw fetchError;
       }
       
     } catch (error) {
       console.error('Download error:', error);
+      
+      // Check if we should retry
+      const isRetryableError = error instanceof Error && (
+        error.message.includes('NetworkError') ||
+        error.message.includes('timeout') ||
+        error.message.includes('fetch') ||
+        error.name === 'AbortError' ||
+        (error.message.includes('HTTP') && (
+          error.message.includes('502') || 
+          error.message.includes('503') || 
+          error.message.includes('504')
+        ))
+      );
+      
+      if (isRetryableError && retryCount < maxRetries) {
+        const delay = baseDelay * Math.pow(2, retryCount); // Exponential backoff
+        console.log(`Retrying download in ${delay}ms (attempt ${retryCount + 1}/${maxRetries + 1})`);
+        
+        toast.info('Download retry', {
+          description: `Retrying download in ${delay/1000} seconds... (attempt ${retryCount + 1})`
+        });
+        
+        setTimeout(() => {
+          handleDownload(retryCount + 1);
+        }, delay);
+        return;
+      }
+      
+      // Final failure
       setIsDownloading(false);
       setDownloadProgress(null);
+      
+      let errorMessage = 'Unknown error occurred';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        
+        // Provide user-friendly error messages
+        if (error.message.includes('timeout') || error.name === 'AbortError') {
+          errorMessage = 'Download request timed out. This may be due to large file size or network issues.';
+        } else if (error.message.includes('NetworkError') || error.message.includes('fetch')) {
+          errorMessage = 'Network error occurred. Please check your connection and try again.';
+        }
+      }
+      
       toast.error('Download failed', {
-        description: error instanceof Error ? error.message : 'Unknown error occurred'
+        description: retryCount > 0 ? `Failed after ${retryCount + 1} attempts: ${errorMessage}` : errorMessage
       });
     }
   };

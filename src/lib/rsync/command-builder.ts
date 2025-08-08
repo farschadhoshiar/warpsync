@@ -1,13 +1,20 @@
 import { RsyncConfig, RsyncOptions, DEFAULT_RSYNC_OPTIONS } from './types';
-import { escapeShellArg, validatePath } from '../ssh/utils';
+import { escapeShellArg, escapeRsyncSSHPath, validatePath } from '../ssh/utils';
+import { SSHKeyManager } from '../ssh/key-manager';
+import { logger } from '@/lib/logger';
 
 export class RsyncCommandBuilder {
   /**
    * Build complete rsync command with SSH configuration
+   * Returns command arguments array and temporary key file path for cleanup
    */
-  static buildCommand(config: RsyncConfig): string {
+  static async buildCommandWithKeyFile(config: RsyncConfig): Promise<{
+    args: string[];
+    tempKeyFilePath?: string;
+  }> {
     const options = { ...DEFAULT_RSYNC_OPTIONS, ...config.options };
     const args: string[] = ['rsync'];
+    let tempKeyFilePath: string | undefined;
 
     // Add basic options
     this.addBasicOptions(args, options);
@@ -20,14 +27,93 @@ export class RsyncCommandBuilder {
     
     // Add SSH configuration if remote transfer
     if (config.sshConfig) {
-      this.addSSHOptions(args, config.sshConfig, options.sshOptions);
+      // Create temporary key file for SSH authentication
+      tempKeyFilePath = await SSHKeyManager.writeTemporaryKeyFile(config.sshConfig.privateKey);
+      
+      // Add SSH options with temporary key file path
+      this.addSSHOptions(args, {
+        ...config.sshConfig,
+        privateKey: tempKeyFilePath
+      }, options.sshOptions);
     }
 
-    // Add source and destination
+    // Enhanced logging with environment-based detail level
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    
+    // Add source and destination with path escaping details
     const { source, destination } = this.formatPaths(config);
     args.push(source, destination);
+    
+    if (isDevelopment) {
+      // Development: Log full command for debugging including path transformations
+      logger.info('🔧 RSYNC COMMAND BUILT (DEV)', {
+        fullCommand: args.join(' '),
+        fullArgs: args,
+        sanitizedArgs: this.sanitizeArgs(args),
+        sanitizedCommand: this.sanitizeArgs(args).join(' '),
+        tempKeyFile: tempKeyFilePath,
+        pathTransformations: {
+          originalSource: config.source,
+          originalDestination: config.destination,
+          escapedSource: source,
+          escapedDestination: destination,
+          hasSpaces: config.source.includes(' ') || config.destination.includes(' '),
+          isSSH: !!config.sshConfig
+        },
+        commandBreakdown: {
+          program: 'rsync',
+          totalArgs: args.length - 1,
+          hasSSH: !!config.sshConfig,
+          source: config.source,
+          destination: config.destination,
+          sshHost: config.sshConfig?.host,
+          sshPort: config.sshConfig?.port,
+          sshUser: config.sshConfig?.username,
+          allArguments: args
+        }
+      });
+    } else {
+      // Production: Log sanitized command only
+      logger.info('🔧 RSYNC COMMAND BUILT', {
+        command: this.sanitizeArgs(args).join(' '),
+        args: this.sanitizeArgs(args),
+        tempKeyFile: tempKeyFilePath
+      });
+    }
 
-    return args.join(' ');
+    return {
+      args,
+      tempKeyFilePath
+    };
+  }
+
+  /**
+   * Sanitize arguments array for logging (remove sensitive info)
+   */
+  private static sanitizeArgs(args: string[]): string[] {
+    return args.map(arg => {
+      // Replace private key file paths with placeholder
+      if (arg.match(/^\/.*\.key$|^\/tmp\/.*$/)) {
+        return '[PRIVATE_KEY_FILE]';
+      }
+      return arg;
+    });
+  }
+
+  /**
+   * Sanitize command for logging (remove sensitive info)
+   * @deprecated Use sanitizeArgs instead
+   */
+  private static sanitizeCommand(command: string): string {
+    return command.replace(/(-i\s+)[^\s]+/g, '$1[PRIVATE_KEY_FILE]');
+  }
+
+  /**
+   * Build complete rsync command with SSH configuration (legacy method)
+   * @deprecated Use buildCommandWithKeyFile instead
+   */
+  static buildCommand(config: RsyncConfig): string {
+    throw new Error('buildCommand is deprecated. Use buildCommandWithKeyFile for SSH key support.');
   }
 
   /**
@@ -59,15 +145,16 @@ export class RsyncCommandBuilder {
         errors.push('SSH port must be between 1 and 65535');
       }
       
-      // Validate authentication method
-      if (!config.sshConfig.privateKey && !config.sshConfig.password) {
-        errors.push('SSH authentication requires either privateKey or password');
+      // Validate SSH private key is present (SSH key authentication only)
+      if (!config.sshConfig.privateKey) {
+        errors.push('SSH private key is required for authentication');
       }
       
-      // Note: sshpass is required for password authentication
-      if (config.sshConfig.password && !config.sshConfig.privateKey) {
-        // We'll rely on runtime checking for sshpass availability
-        // Could add a check here if needed: errors.push('sshpass utility is required for password authentication');
+      // Validate SSH key format
+      if (config.sshConfig.privateKey && 
+          (!config.sshConfig.privateKey.includes('-----BEGIN') || 
+           !config.sshConfig.privateKey.includes('-----END'))) {
+        errors.push('Invalid SSH private key format');
       }
     }
 
@@ -170,10 +257,8 @@ export class RsyncCommandBuilder {
       sshArgs.push('-p', sshConfig.port.toString());
     }
 
-    // Authentication configuration
-    if (sshConfig.privateKey) {
-      sshArgs.push('-i', escapeShellArg(sshConfig.privateKey));
-    }
+    // SSH private key authentication (required)
+    sshArgs.push('-i', escapeShellArg(sshConfig.privateKey));
 
     // Connection optimization
     sshArgs.push('-o', 'Compression=yes');
@@ -186,16 +271,8 @@ export class RsyncCommandBuilder {
       sshArgs.push(...additionalOptions);
     }
 
-    // Handle password authentication vs key authentication
-    if (sshConfig.password && !sshConfig.privateKey) {
-      // Use sshpass with environment variable for password authentication
-      // Command will be executed with SSHPASS environment variable
-      args.unshift('sshpass', '-e');
-      args.push('-e', `ssh ${sshArgs.join(' ')}`);
-    } else {
-      // Use standard SSH (key-based authentication)
-      args.push('-e', `ssh ${sshArgs.join(' ')}`);
-    }
+    // Use standard SSH with key-based authentication only
+    args.push('-e', `ssh ${sshArgs.join(' ')}`);
   }
 
   private static formatPaths(config: RsyncConfig): { source: string; destination: string } {
@@ -205,12 +282,14 @@ export class RsyncCommandBuilder {
     // Format remote source path
     if (config.sshConfig) {
       const { host, username } = config.sshConfig;
-      source = `${username}@${host}:${escapeShellArg(config.source)}`;
+      // Use specialized rsync SSH path escaping for paths with spaces and special characters
+      source = `${username}@${host}:${escapeRsyncSSHPath(config.source)}`;
     } else {
       source = escapeShellArg(config.source);
     }
 
     // Format destination path (always local in our case)
+    // Local paths use standard shell escaping
     destination = escapeShellArg(config.destination);
 
     return { source, destination };
@@ -226,8 +305,7 @@ export class RsyncCommandBuilder {
       host: string;
       port: number;
       username: string;
-      privateKey?: string;
-      password?: string;
+      privateKey: string;  // SSH private key content (required)
     },
     customOptions: Partial<RsyncOptions> = {}
   ): RsyncConfig {
@@ -251,8 +329,7 @@ export class RsyncCommandBuilder {
       host: string;
       port: number;
       username: string;
-      privateKey?: string;
-      password?: string;
+      privateKey: string;  // SSH private key content (required)
     }
   ): RsyncConfig {
     return {
@@ -279,8 +356,7 @@ export class RsyncCommandBuilder {
       host: string;
       port: number;
       username: string;
-      privateKey?: string;
-      password?: string;
+      privateKey: string;  // SSH private key content (required)
     },
     customOptions: Partial<RsyncOptions> = {}
   ): RsyncConfig {

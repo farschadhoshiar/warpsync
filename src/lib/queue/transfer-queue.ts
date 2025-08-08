@@ -7,6 +7,7 @@ import {
   TransferJob, 
   TransferStatus, 
   TransferPriority,
+  TransferType,
   QueueConfig, 
   QueueStats,
   RetryPolicy,
@@ -327,19 +328,45 @@ export class TransferQueue {
     transfer.status = TransferStatus.STARTING;
     transfer.startedAt = new Date();
 
-    logger.info('Starting transfer', {
-      transferId: transfer.id,
+    logger.info('🚀 Starting file transfer', {
       filename: transfer.filename,
-      size: transfer.size
+      size: `${Math.round((transfer.size || 0) / 1024 / 1024 * 100) / 100} MB`,
+      source: transfer.source,
+      destination: transfer.destination,
+      type: transfer.type,
+      isDirectoryPackage: transfer.type === TransferType.DIRECTORY_PACKAGE
     });
 
-    // Build rsync configuration
-    const rsyncConfig = RsyncCommandBuilder.createTransferConfig(
-      transfer.source,
-      transfer.destination,
-      transfer.sshConfig!,
-      transfer.rsyncOptions
-    );
+    // Build rsync configuration based on transfer type
+    let rsyncConfig;
+    if (transfer.type === TransferType.DIRECTORY_PACKAGE) {
+      // Directory packages use enhanced directory config with special handling
+      rsyncConfig = RsyncCommandBuilder.createDirectoryConfig(
+        transfer.source,
+        transfer.destination,
+        transfer.sshConfig!,
+        {
+          ...transfer.rsyncOptions,
+          recursive: true,
+          createDirs: true,
+          preserveHierarchy: true // Ensure destination path is created
+        }
+      );
+    } else if (transfer.type === TransferType.DIRECTORY) {
+      rsyncConfig = RsyncCommandBuilder.createDirectoryConfig(
+        transfer.source,
+        transfer.destination,
+        transfer.sshConfig!,
+        transfer.rsyncOptions
+      );
+    } else {
+      rsyncConfig = RsyncCommandBuilder.createTransferConfig(
+        transfer.source,
+        transfer.destination,
+        transfer.sshConfig!,
+        transfer.rsyncOptions
+      );
+    }
 
     // Start rsync process
     const rsyncProcessId = await this.rsyncManager.startTransfer(
@@ -419,6 +446,17 @@ export class TransferQueue {
    */
   private async handleTransferError(transfer: TransferJob, error: Error): Promise<void> {
     transfer.error = error.message;
+    
+    // Enhanced error logging for directory packages
+    if (transfer.type === TransferType.DIRECTORY_PACKAGE) {
+      logger.error('Directory package transfer failed', {
+        transferId: transfer.id,
+        filename: transfer.filename,
+        source: transfer.source,
+        error: error.message,
+        isPackageDownload: true
+      });
+    }
     
     // Check if should retry
     if (transfer.retryCount < transfer.maxRetries && this.shouldRetry(error)) {

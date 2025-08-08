@@ -23,6 +23,27 @@ const DownloadRequestSchema = z.object({
 });
 
 /**
+ * Escape regex special characters for safe MongoDB regex queries
+ */
+function escapeRegex(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Find child FileState records for a given parent directory
+ */
+async function findChildFileStates(jobId: string, parentRelativePath: string, FileState: any) {
+  const escapedPath = escapeRegex(parentRelativePath);
+  return await FileState.find({
+    jobId,
+    relativePath: { 
+      $regex: `^${escapedPath}/`,
+      $options: 'i'
+    }
+  }).lean();
+}
+
+/**
  * POST /api/files/download
  * Download a file or folder from remote server
  */
@@ -30,19 +51,82 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   const logger = await getRequestLogger();
   const timer = new PerformanceTimer(logger, 'download_file');
   
-  logger.info('Processing download request');
+  // Add request timeout for large file processing
+  const timeout = 30000; // 30 seconds
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  // Declare variables for error handling
+  let fileId: string | undefined;
+  let fileState: any;
   
   try {
-    const body = await req.json();
-    const { fileId, jobId, localPath, priority } = DownloadRequestSchema.parse(body);
+    logger.info('Processing download request');
+    
+    const body = await Promise.race([
+      req.json(),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout while parsing body')), timeout)
+      )
+    ]) as unknown;
+    const parsedBody = DownloadRequestSchema.parse(body);
+    fileId = parsedBody.fileId;
+    const { jobId, localPath, priority } = parsedBody;
+    
+    logger.info('Download request received', {
+      fileId,
+      jobId,
+      localPath,
+      priority,
+      fileIdLength: fileId?.length,
+      isValidObjectId: fileId && /^[0-9a-fA-F]{24}$/.test(fileId)
+    });
     
     await connectDB();
     const { SyncJob, FileState } = await import('@/models');
     
     // Get the file state and job info
-    const fileState = await FileState.findById(fileId);
+    logger.info('Looking up FileState', { fileId });
+    fileState = await FileState.findById(fileId);
     if (!fileState) {
+      logger.error('FileState not found', { 
+        fileId,
+        jobId,
+        searchAttempted: `FileState.findById("${fileId}")` 
+      });
       throw new Error('File not found');
+    }
+    
+    logger.info('FileState found', {
+      fileId: fileState._id.toString(),
+      filename: fileState.filename,
+      relativePath: fileState.relativePath,
+      isDirectory: fileState.isDirectory,
+      syncState: fileState.syncState
+    });
+
+    // Check for child directories/files if this is a directory
+    let childFileStates: any[] = [];
+    let isDirectoryPackage = false;
+    let totalPackageSize = fileState.size || 0;
+
+    if (fileState.isDirectory) {
+      logger.info('Checking for child FileStates for directory package');
+      childFileStates = await findChildFileStates(jobId, fileState.relativePath, FileState);
+      
+      if (childFileStates.length > 0) {
+        isDirectoryPackage = true;
+        totalPackageSize = childFileStates.reduce((sum, child) => {
+          return sum + (child.remote?.size || child.local?.size || 0);
+        }, 0);
+        
+        logger.info('Directory package detected', {
+          parentPath: fileState.relativePath,
+          childCount: childFileStates.length,
+          totalPackageSize,
+          childPaths: childFileStates.map(c => c.relativePath).slice(0, 5), // Log first 5 for debugging
+        });
+      }
     }
     
     const job = await SyncJob.findById(jobId).populate('serverProfileId');
@@ -125,8 +209,47 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
       serverAddress: serverProfile.address
     });
     
-    // Determine local destination path
-    const destination = localPath || path.join(job.localPath, fileState.relativePath);
+    // Enhanced path debugging
+    const constructedSourcePath = path.join(job.remotePath, fileState.relativePath);
+    logger.info('Path construction details', {
+      jobRemotePath: job.remotePath,
+      fileStateRelativePath: fileState.relativePath,
+      constructedSourcePath,
+      fileStateParentPath: fileState.parentPath,
+      fileStateFilename: fileState.filename,
+      isDirectoryPackage,
+      childCount: childFileStates.length
+    });
+
+    // Determine the source path for rsync
+    let finalSourcePath = constructedSourcePath;
+    if (isDirectoryPackage) {
+      // For directory packages, ensure we sync the directory contents with trailing slash
+      finalSourcePath = constructedSourcePath.endsWith('/') ? constructedSourcePath : constructedSourcePath + '/';
+      logger.info('Directory package source path adjusted', {
+        originalPath: constructedSourcePath,
+        adjustedPath: finalSourcePath
+      });
+    }
+    
+    // Determine local destination path - preserve exact structure for sync compatibility
+    let destination: string;
+    if (localPath) {
+      destination = localPath;
+    } else {
+      // Always use the full relative path to maintain exact structure for sync
+      // This ensures downloaded content matches the remote structure exactly
+      destination = path.join(job.localPath, fileState.relativePath);
+      
+      logger.debug('Destination path constructed', {
+        fileId,
+        remotePath: fileState.relativePath,
+        localPath: job.localPath,
+        destination,
+        isDirectory: fileState.isDirectory,
+        filename: fileState.filename
+      });
+    }
     
     // Ensure destination directory exists
     const destinationDir = path.dirname(destination);
@@ -149,23 +272,32 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
     
     const transferQueue = TransferQueue.getInstance(undefined, undefined, eventEmitter);
     
+    // Determine transfer type based on directory package detection
+    let transferType: TransferType;
+    if (isDirectoryPackage) {
+      transferType = TransferType.DIRECTORY_PACKAGE;
+    } else if (fileState.isDirectory) {
+      transferType = TransferType.DIRECTORY;
+    } else {
+      transferType = TransferType.DOWNLOAD;
+    }
+
     // Create transfer job
     const transferData = {
       jobId: job._id.toString(),
       fileId: fileState._id.toString(),
-      type: TransferType.DOWNLOAD,
+      type: transferType,
       priority: TransferPriority[priority as keyof typeof TransferPriority],
-      source: path.join(job.remotePath, fileState.relativePath),
+      source: finalSourcePath,
       destination: destination,
       filename: fileState.filename,
       relativePath: fileState.relativePath,
-      size: fileState.size || 0,
+      size: isDirectoryPackage ? totalPackageSize : (fileState.size || 0),
       sshConfig: {
         host: serverProfile.address,
         port: serverProfile.port,
         username: serverProfile.user,
-        privateKey: serverProfile.privateKey,
-        password: serverProfile.password
+        privateKey: serverProfile.privateKey || ''
       },
       rsyncOptions: {
         verbose: true,
@@ -174,7 +306,13 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
         progress: true,
         humanReadable: true,
         partial: true,
-        inplace: false
+        inplace: false,
+        // Enhanced options for directory packages
+        ...(isDirectoryPackage && {
+          recursive: true,
+          dirs: true,
+          mkpath: true
+        })
       },
       maxRetries: 3
     };
@@ -188,7 +326,11 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
       jobId,
       filename: fileState.filename,
       source: transferData.source,
-      destination: transferData.destination
+      destination: transferData.destination,
+      transferType: transferData.type,
+      isDirectoryPackage,
+      totalSize: transferData.size,
+      childCount: childFileStates.length
     });
     
     // Update file state to queued
@@ -218,6 +360,32 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
     
   } catch (error) {
     timer.endWithError(error);
+    
+    // Enhanced error handling for network timeouts and large files
+    if (error instanceof Error) {
+      if (error.message.includes('timeout') || error.message.includes('Request timeout')) {
+        logger.error('Download request timeout', {
+          fileId,
+          filename: fileState?.filename,
+          size: fileState?.size,
+          isDirectory: fileState?.isDirectory,
+          timeout
+        });
+        throw new Error(`Download request timed out after ${timeout/1000} seconds. This may be due to large file size or network issues.`);
+      }
+      
+      if (error.message.includes('NetworkError') || error.message.includes('fetch')) {
+        logger.error('Network error during download request', {
+          fileId,
+          filename: fileState?.filename,
+          error: error.message
+        });
+        throw new Error('Network error occurred while processing download request. Please check your connection and try again.');
+      }
+    }
+    
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 });

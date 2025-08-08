@@ -5,8 +5,7 @@ export interface RsyncConfig {
     host: string;
     port: number;
     username: string;
-    privateKey?: string;
-    password?: string;
+    privateKey: string;  // SSH private key content (required for SSH key auth only)
   };
   options: RsyncOptions;
 }
@@ -103,6 +102,7 @@ export interface RsyncProcess {
   logs: string[];
   errors: string[];
   result?: RsyncResult;
+  tempKeyFilePath?: string; // Path to temporary SSH key file for cleanup
 }
 
 export enum ProcessStatus {

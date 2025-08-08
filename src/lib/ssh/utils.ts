@@ -33,6 +33,19 @@ export function escapeShellArg(arg: string): string {
 }
 
 /**
+ * Escape paths for rsync over SSH
+ * Rsync over SSH requires different escaping than general shell commands
+ * Uses backslash escaping instead of quotes for compatibility with rsync
+ */
+export function escapeRsyncSSHPath(path: string): string {
+  // For rsync over SSH, escape spaces and special characters with backslashes
+  // This is different from general shell escaping which uses quotes
+  // Characters that need escaping: space, backslash, dollar, backtick, double quote, single quote,
+  // semicolon, ampersand, pipe, redirects, parentheses, braces, brackets, wildcards, tilde
+  return path.replace(/([\\$`"\s';&|<>(){}[\]?*~])/g, '\\$1');
+}
+
+/**
  * Build SSH command string with proper escaping
  */
 export function buildSSHCommand(command: string, args: string[] = []): string {
