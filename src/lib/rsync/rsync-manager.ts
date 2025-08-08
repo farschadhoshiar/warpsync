@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from "child_process";
-import { logger } from "@/lib/logger";
+import { logger, devLogger } from "@/lib/logger";
 import { EventEmitter } from "../websocket/emitter";
 import { RsyncCommandBuilder } from "./command-builder";
 import { RsyncProgressParser } from "./progress-parser";
@@ -242,7 +242,7 @@ export class RsyncManager {
         const sourceArg = programArgs[programArgs.length - 2];
         const destArg = programArgs[programArgs.length - 1];
 
-        logger.info("🚀 EXECUTING RSYNC (DEV)", {
+        devLogger.info("🚀 EXECUTING RSYNC (DEV)", {
           fullCommand: args.join(" "),
           fullArgs: args,
           sanitizedArgs: this.sanitizeArgs(args),
@@ -280,7 +280,7 @@ export class RsyncManager {
         });
 
         // Additional logging for command that will be executed
-        logger.info("📋 EXACT COMMAND EXECUTION (DEV)", {
+        devLogger.info("📋 EXACT COMMAND EXECUTION (DEV)", {
           executablePath: program,
           argumentsArray: programArgs,
           commandAsString: `${program} ${programArgs.join(" ")}`,
@@ -340,7 +340,7 @@ export class RsyncManager {
         stdout += data.toString();
 
         if (isDevelopment && lines.some((line) => line.trim())) {
-          logger.info("📤 RSYNC STDOUT (DEV)", {
+          devLogger.info("📤 RSYNC STDOUT (DEV)", {
             processId,
             rawData: data.toString(),
             lines: lines.filter((line) => line.trim()),
@@ -390,7 +390,7 @@ export class RsyncManager {
 
         // Enhanced stderr logging for debugging
         if (isDevelopment) {
-          logger.error("⚠️ RSYNC STDERR (DEV)", {
+          devLogger.error("⚠️ RSYNC STDERR (DEV)", {
             processId,
             error: errorLine,
             fullError: errorLine,

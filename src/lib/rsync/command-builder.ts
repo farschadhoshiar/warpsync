@@ -1,7 +1,7 @@
 import { RsyncConfig, RsyncOptions, DEFAULT_RSYNC_OPTIONS } from "./types";
 import { escapeShellArg, escapeRsyncSSHPath, validatePath } from "../ssh/utils";
 import { SSHKeyManager } from "../ssh/key-manager";
-import { logger } from "@/lib/logger";
+import { logger, devLogger } from "@/lib/logger";
 
 export class RsyncCommandBuilder {
   /**
@@ -51,7 +51,7 @@ export class RsyncCommandBuilder {
 
     // Enhanced path logging for debugging
     if (isDevelopment) {
-      logger.info("🔧 PATH CONSTRUCTION DETAILS (DEV)", {
+      devLogger.info("🔧 PATH CONSTRUCTION DETAILS (DEV)", {
         originalSource: config.source,
         originalDestination: config.destination,
         escapedSource: source,
@@ -80,7 +80,7 @@ export class RsyncCommandBuilder {
 
       // Character-by-character analysis for paths with spaces
       if (config.source.includes(" ") || config.destination.includes(" ")) {
-        logger.info("🔍 CHARACTER ANALYSIS FOR SPACED PATHS (DEV)", {
+        devLogger.info("🔍 CHARACTER ANALYSIS FOR SPACED PATHS (DEV)", {
           sourceCharacters: config.source.split("").map((char, i) => ({
             index: i,
             char: char,
@@ -366,7 +366,7 @@ export class RsyncCommandBuilder {
       const escapedPath = escapeRsyncSSHPath(config.source);
 
       if (isDevelopment) {
-        logger.info("🌐 SSH SOURCE PATH ESCAPING (DEV)", {
+        devLogger.info("🌐 SSH SOURCE PATH ESCAPING (DEV)", {
           originalPath: config.source,
           escapedPath: escapedPath,
           sshHost: host,
@@ -389,7 +389,7 @@ export class RsyncCommandBuilder {
       const escapedSource = escapeShellArg(config.source);
 
       if (isDevelopment) {
-        logger.info("💻 LOCAL SOURCE PATH ESCAPING (DEV)", {
+        devLogger.info("💻 LOCAL SOURCE PATH ESCAPING (DEV)", {
           originalPath: config.source,
           escapedPath: escapedSource,
           escapeFunction: "escapeShellArg",
@@ -406,7 +406,7 @@ export class RsyncCommandBuilder {
     const escapedDestination = escapeShellArg(config.destination);
 
     if (isDevelopment) {
-      logger.info("📁 DESTINATION PATH ESCAPING (DEV)", {
+      devLogger.info("📁 DESTINATION PATH ESCAPING (DEV)", {
         originalPath: config.destination,
         escapedPath: escapedDestination,
         escapeFunction: "escapeShellArg",
