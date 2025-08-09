@@ -1,6 +1,6 @@
 export interface SocketEvents {
   // File state events
-  'file:state:update': {
+  "file:state:update": {
     jobId: string;
     fileId: string;
     filename: string;
@@ -9,28 +9,28 @@ export interface SocketEvents {
     newState: FileStateType;
     timestamp: string;
   };
-  
+
   // Unified transfer progress events
-  'transfer:progress': {
+  "transfer:progress": {
     transferId: string;
     fileId: string;
     jobId: string;
     filename: string;
-    progress: number;           // 0-100 percentage
+    progress: number; // 0-100 percentage
     bytesTransferred: number;
     totalBytes: number;
-    speed: string;             // Human readable (e.g., "1.2 MB/s")
-    speedBps: number;          // Raw bytes per second
-    eta: string;               // Human readable (e.g., "0:02:15")
-    etaSeconds: number;        // Raw seconds remaining
-    status: 'starting' | 'transferring' | 'completed' | 'failed';
-    elapsedTime: number;       // Milliseconds since start
+    speed: string; // Human readable (e.g., "1.2 MB/s")
+    speedBps: number; // Raw bytes per second
+    eta: string; // Human readable (e.g., "0:02:15")
+    etaSeconds: number; // Raw seconds remaining
+    status: "starting" | "transferring" | "completed" | "failed";
+    elapsedTime: number; // Milliseconds since start
     compressionRatio?: number; // Optional compression statistics
     timestamp: string;
   };
 
   // Transfer status change events
-  'transfer:status': {
+  "transfer:status": {
     transferId: string;
     fileId: string;
     jobId: string;
@@ -40,9 +40,32 @@ export interface SocketEvents {
     timestamp: string;
     metadata?: Record<string, unknown>;
   };
-  
+
+  // Scan progress events
+  "scan:ssh-connecting": {
+    jobId: string;
+    jobName: string;
+    serverAddress: string;
+    timestamp: string;
+  };
+
+  "scan:ssh-connected": {
+    jobId: string;
+    jobName: string;
+    serverAddress: string;
+    timestamp: string;
+  };
+
+  "scan:syncing-states": {
+    jobId: string;
+    jobName: string;
+    remotePath: string;
+    localPath: string;
+    timestamp: string;
+  };
+
   // Scan completion events
-  'scan:complete': {
+  "scan:complete": {
     jobId: string;
     jobName: string;
     remotePath: string;
@@ -54,18 +77,18 @@ export interface SocketEvents {
     duration: number;
     timestamp: string;
   };
-  
+
   // Log streaming events
-  'log:message': {
+  "log:message": {
     jobId?: string;
-    level: 'debug' | 'info' | 'warn' | 'error';
+    level: "debug" | "info" | "warn" | "error";
     message: string;
-    source: 'rsync' | 'ssh' | 'scanner' | 'system' | 'scheduler';
+    source: "rsync" | "ssh" | "scanner" | "system" | "scheduler";
     timestamp: string;
   };
-  
+
   // Connection events
-  'connection:test': {
+  "connection:test": {
     serverId: string;
     serverName: string;
     success: boolean;
@@ -73,31 +96,60 @@ export interface SocketEvents {
     error?: string;
     timestamp: string;
   };
-  
+
   // Error events
-  'error:occurred': {
+  "error:occurred": {
     jobId?: string;
     serverId?: string;
-    type: 'connection' | 'transfer' | 'scan' | 'validation' | 'system' | 'spawn';
+    type:
+      | "connection"
+      | "transfer"
+      | "scan"
+      | "validation"
+      | "system"
+      | "spawn";
     message: string;
     details?: Record<string, unknown>;
     timestamp: string;
   };
 }
 
-export type FileStateType = 'synced' | 'remote_only' | 'local_only' | 'desynced' | 'queued' | 'transferring' | 'failed';
+export type FileStateType =
+  | "synced"
+  | "remote_only"
+  | "local_only"
+  | "desynced"
+  | "queued"
+  | "transferring"
+  | "failed";
 
 // Event validation schemas
-import { z } from 'zod';
+import { z } from "zod";
 
 export const FileStateUpdateSchema = z.object({
   jobId: z.string(),
   fileId: z.string(),
   filename: z.string(),
   relativePath: z.string(),
-  oldState: z.enum(['synced', 'remote_only', 'local_only', 'desynced', 'queued', 'transferring', 'failed']),
-  newState: z.enum(['synced', 'remote_only', 'local_only', 'desynced', 'queued', 'transferring', 'failed']),
-  timestamp: z.string()
+  oldState: z.enum([
+    "synced",
+    "remote_only",
+    "local_only",
+    "desynced",
+    "queued",
+    "transferring",
+    "failed",
+  ]),
+  newState: z.enum([
+    "synced",
+    "remote_only",
+    "local_only",
+    "desynced",
+    "queued",
+    "transferring",
+    "failed",
+  ]),
+  timestamp: z.string(),
 });
 
 export const UnifiedTransferProgressSchema = z.object({
@@ -112,10 +164,10 @@ export const UnifiedTransferProgressSchema = z.object({
   speedBps: z.number().min(0),
   eta: z.string(),
   etaSeconds: z.number().min(0),
-  status: z.enum(['starting', 'transferring', 'completed', 'failed']),
+  status: z.enum(["starting", "transferring", "completed", "failed"]),
   elapsedTime: z.number().min(0),
   compressionRatio: z.number().optional(),
-  timestamp: z.string()
+  timestamp: z.string(),
 });
 
 export const TransferStatusSchema = z.object({
@@ -126,5 +178,5 @@ export const TransferStatusSchema = z.object({
   oldStatus: z.string(),
   newStatus: z.string(),
   timestamp: z.string(),
-  metadata: z.record(z.string(), z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });

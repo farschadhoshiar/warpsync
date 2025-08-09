@@ -1,31 +1,32 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
-} from '@/components/ui/select';
-import { 
-  DropdownMenu, 
-  DropdownMenuContent, 
-  DropdownMenuItem, 
-  DropdownMenuTrigger 
-} from '@/components/ui/dropdown-menu';
-import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
-import { useJobs, type Job } from '@/hooks/useJobs';
+import React, { useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import { useJobs, type Job } from "@/hooks/useJobs";
+import DeleteJobDialog from "./delete-job-dialog";
 
-type StatusFilter = 'all' | 'active' | 'inactive';
-type SortBy = 'name' | 'created' | 'lastRun';
+type StatusFilter = "all" | "active" | "inactive";
+type SortBy = "name" | "created" | "lastRun";
 
 interface JobListProps {
   onEdit?: (id: string) => void;
@@ -33,32 +34,39 @@ interface JobListProps {
 }
 
 export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [sortBy, setSortBy] = useState<SortBy>('name');
-  const { jobs, loading, error, refetch } = useJobs();
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [sortBy, setSortBy] = useState<SortBy>("name");
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [jobToDelete, setJobToDelete] = useState<Job | null>(null);
+  const [isDeletingJob, setIsDeletingJob] = useState(false);
+  const { jobs, loading, error, refetch, deleteJob } = useJobs();
 
   // Filter and sort jobs
   const filteredJobs = jobs
-    .filter(job => {
-      const matchesSearch = job.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          job.remotePath.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          job.localPath.toLowerCase().includes(searchTerm.toLowerCase());
-      
+    .filter((job) => {
+      const matchesSearch =
+        job.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        job.remotePath.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        job.localPath.toLowerCase().includes(searchTerm.toLowerCase());
+
       const isActive = job.enabled && job.serverProfileId; // Simple active check
-      const matchesStatus = statusFilter === 'all' || 
-                          (statusFilter === 'active' && isActive) ||
-                          (statusFilter === 'inactive' && !isActive);
-      
+      const matchesStatus =
+        statusFilter === "all" ||
+        (statusFilter === "active" && isActive) ||
+        (statusFilter === "inactive" && !isActive);
+
       return matchesSearch && matchesStatus;
     })
     .sort((a, b) => {
       switch (sortBy) {
-        case 'name':
+        case "name":
           return a.name.localeCompare(b.name);
-        case 'created':
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        case 'lastRun':
+        case "created":
+          return (
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          );
+        case "lastRun":
           const aLastScan = a.lastScan ? new Date(a.lastScan).getTime() : 0;
           const bLastScan = b.lastScan ? new Date(b.lastScan).getTime() : 0;
           return bLastScan - aLastScan;
@@ -70,62 +78,70 @@ export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
   const handleToggleEnabled = async (id: string, enabled: boolean) => {
     try {
       const response = await fetch(`/api/jobs/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !enabled })
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !enabled }),
       });
 
       if (response.ok) {
         await refetch();
       } else {
-        throw new Error('Failed to update job');
+        throw new Error("Failed to update job");
       }
     } catch (error) {
-      console.error('Failed to toggle job:', error);
+      console.error("Failed to toggle job:", error);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this job?')) return;
+  const handleDeleteClick = (job: Job) => {
+    setJobToDelete(job);
+    setIsDeleteDialogOpen(true);
+  };
 
+  const handleDeleteConfirm = async () => {
+    if (!jobToDelete) return;
+
+    setIsDeletingJob(true);
     try {
-      const response = await fetch(`/api/jobs/${id}`, {
-        method: 'DELETE'
-      });
-
-      if (response.ok) {
-        await refetch();
-      } else {
-        throw new Error('Failed to delete job');
-      }
+      await deleteJob(jobToDelete._id);
+      setIsDeleteDialogOpen(false);
+      setJobToDelete(null);
     } catch (error) {
-      console.error('Failed to delete job:', error);
+      console.error("Failed to delete job:", error);
+    } finally {
+      setIsDeletingJob(false);
     }
+  };
+
+  const handleDeleteCancel = () => {
+    if (isDeletingJob) return;
+    setIsDeleteDialogOpen(false);
+    setJobToDelete(null);
   };
 
   const handleSync = async (id: string) => {
     try {
       const response = await fetch(`/api/jobs/${id}/sync`, {
-        method: 'POST'
+        method: "POST",
       });
 
       if (response.ok) {
         await refetch();
       } else {
-        throw new Error('Failed to start sync');
+        throw new Error("Failed to start sync");
       }
     } catch (error) {
-      console.error('Failed to start sync:', error);
+      console.error("Failed to start sync:", error);
     }
   };
 
   const getStatusBadge = (job: Job) => {
     const isActive = job.enabled && job.serverProfileId;
-    
+
     if (!job.enabled) {
       return <Badge variant="secondary">Disabled</Badge>;
     }
-    
+
     if (!job.serverProfileId) {
       return <Badge variant="destructive">No Server</Badge>;
     }
@@ -133,7 +149,7 @@ export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
     if (job.lastScan) {
       const lastScan = new Date(job.lastScan);
       const hoursAgo = (Date.now() - lastScan.getTime()) / (1000 * 60 * 60);
-      
+
       if (hoursAgo < 1) {
         return <Badge variant="default">Recently Scanned</Badge>;
       } else if (hoursAgo < 24) {
@@ -151,7 +167,7 @@ export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
   };
 
   const formatLastScan = (lastScan?: string) => {
-    if (!lastScan) return 'Never';
+    if (!lastScan) return "Never";
     const date = new Date(lastScan);
     return date.toLocaleString();
   };
@@ -161,7 +177,12 @@ export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
       <Alert>
         <AlertDescription>
           Error loading jobs: {error}
-          <Button variant="outline" size="sm" onClick={refetch} className="ml-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refetch}
+            className="ml-2"
+          >
             Retry
           </Button>
         </AlertDescription>
@@ -179,11 +200,7 @@ export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
             Manage your file synchronization jobs
           </p>
         </div>
-        {onNew && (
-          <Button onClick={onNew}>
-            New Job
-          </Button>
-        )}
+        {onNew && <Button onClick={onNew}>New Job</Button>}
       </div>
 
       {/* Filters and search */}
@@ -199,10 +216,13 @@ export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            
+
             <div>
               <Label>Status Filter</Label>
-              <Select value={statusFilter} onValueChange={(value: StatusFilter) => setStatusFilter(value)}>
+              <Select
+                value={statusFilter}
+                onValueChange={(value: StatusFilter) => setStatusFilter(value)}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -213,10 +233,13 @@ export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div>
               <Label>Sort By</Label>
-              <Select value={sortBy} onValueChange={(value: SortBy) => setSortBy(value)}>
+              <Select
+                value={sortBy}
+                onValueChange={(value: SortBy) => setSortBy(value)}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -227,10 +250,10 @@ export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div className="flex items-end">
               <Button variant="outline" onClick={refetch} disabled={loading}>
-                {loading ? 'Loading...' : 'Refresh'}
+                {loading ? "Loading..." : "Refresh"}
               </Button>
             </div>
           </div>
@@ -247,12 +270,12 @@ export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
           <CardContent className="pt-6">
             <div className="text-center py-8">
               <p className="text-muted-foreground mb-4">
-                {jobs.length === 0 ? 'No sync jobs found' : 'No jobs match your filters'}
+                {jobs.length === 0
+                  ? "No sync jobs found"
+                  : "No jobs match your filters"}
               </p>
               {onNew && jobs.length === 0 && (
-                <Button onClick={onNew}>
-                  Create your first job
-                </Button>
+                <Button onClick={onNew}>Create your first job</Button>
               )}
             </div>
           </CardContent>
@@ -282,8 +305,8 @@ export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
                           </DropdownMenuItem>
                         )}
                         <Separator />
-                        <DropdownMenuItem 
-                          onClick={() => handleDelete(job._id)}
+                        <DropdownMenuItem
+                          onClick={() => handleDeleteClick(job)}
                           className="text-destructive"
                         >
                           Delete
@@ -297,22 +320,30 @@ export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
                 <div className="space-y-3">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                     <div>
-                      <Label className="text-muted-foreground">Local Path</Label>
+                      <Label className="text-muted-foreground">
+                        Local Path
+                      </Label>
                       <p className="font-mono text-xs">{job.localPath}</p>
                     </div>
                     <div>
-                      <Label className="text-muted-foreground">Remote Path</Label>
+                      <Label className="text-muted-foreground">
+                        Remote Path
+                      </Label>
                       <p className="font-mono text-xs">{job.remotePath}</p>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                     <div>
-                      <Label className="text-muted-foreground">Auto Queue</Label>
-                      <p>{job.autoQueue.enabled ? 'Enabled' : 'Disabled'}</p>
+                      <Label className="text-muted-foreground">
+                        Auto Queue
+                      </Label>
+                      <p>{job.autoQueue.enabled ? "Enabled" : "Disabled"}</p>
                     </div>
                     <div>
-                      <Label className="text-muted-foreground">Scan Interval</Label>
+                      <Label className="text-muted-foreground">
+                        Scan Interval
+                      </Label>
                       <p>{job.scanInterval} minutes</p>
                     </div>
                     <div>
@@ -325,13 +356,15 @@ export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
                     <div className="flex items-center gap-2">
                       <Switch
                         checked={job.enabled}
-                        onCheckedChange={() => handleToggleEnabled(job._id, job.enabled)}
+                        onCheckedChange={() =>
+                          handleToggleEnabled(job._id, job.enabled)
+                        }
                       />
                       <Label className="text-sm">
-                        {job.enabled ? 'Enabled' : 'Disabled'}
+                        {job.enabled ? "Enabled" : "Disabled"}
                       </Label>
                     </div>
-                    
+
                     <div className="text-sm text-muted-foreground">
                       {job.serverProfile && (
                         <span>Server: {job.serverProfile.name}</span>
@@ -344,6 +377,16 @@ export const JobList: React.FC<JobListProps> = ({ onEdit, onNew }) => {
           ))}
         </div>
       )}
+
+      {/* Delete Job Confirmation Dialog */}
+      <DeleteJobDialog
+        isOpen={isDeleteDialogOpen}
+        onClose={handleDeleteCancel}
+        onConfirm={handleDeleteConfirm}
+        jobName={jobToDelete?.name || ""}
+        jobId={jobToDelete?._id || ""}
+        isDeleting={isDeletingJob}
+      />
     </div>
   );
 };

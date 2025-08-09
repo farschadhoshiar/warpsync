@@ -1,22 +1,23 @@
-import { logger } from '@/lib/logger';
-import { EventEmitter } from '../websocket/emitter';
-import { RemoteScanner } from './remote-scanner';
-import { LocalScanner } from './local-scanner';
-import { SSHConnectionConfig } from '../ssh/types';
-import connectDB from '@/lib/mongodb';
-import { calculateAllDirectoryStats, FileStateRecord } from './directory-stats';
-import { 
-  DirectoryComparison, 
-  FileComparison, 
-  FileMetadata, 
+import { logger } from "@/lib/logger";
+import { EventEmitter } from "../websocket/emitter";
+import { RemoteScanner } from "./remote-scanner";
+import { LocalScanner } from "./local-scanner";
+import { SSHConnectionConfig } from "../ssh/types";
+import { SSHConnectionManager } from "../ssh/ssh-connection";
+import connectDB from "@/lib/mongodb";
+import { calculateAllDirectoryStats, FileStateRecord } from "./directory-stats";
+import {
+  DirectoryComparison,
+  FileComparison,
+  FileMetadata,
   DirectoryMetadata,
-  FileState as ScanFileState, 
-  ScanOptions, 
+  FileState as ScanFileState,
+  ScanOptions,
   ScanProgress,
   ComparisonStats,
   AutoQueueConfig,
-  PatternMatcher
-} from './types';
+  PatternMatcher,
+} from "./types";
 
 export class FileScanner {
   private remoteScanner: RemoteScanner;
@@ -30,6 +31,25 @@ export class FileScanner {
   }
 
   /**
+   * Test SSH connection before starting scan
+   */
+  async testSSHConnection(
+    config: SSHConnectionConfig,
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const sshManager = SSHConnectionManager.getInstance();
+      const result = await sshManager.testConnection(config);
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        message:
+          error instanceof Error ? error.message : "SSH connection test failed",
+      };
+    }
+  }
+
+  /**
    * Perform complete directory comparison between remote and local paths
    */
   async compareDirectories(
@@ -38,14 +58,17 @@ export class FileScanner {
     remotePath: string,
     localPath: string,
     options: Partial<ScanOptions> = {},
-    autoQueueConfig?: AutoQueueConfig
+    autoQueueConfig?: AutoQueueConfig,
   ): Promise<DirectoryComparison> {
-    logger.info('Starting directory comparison', {
-      jobId,
-      remotePath,
-      localPath,
-      options
-    });
+    logger.info(
+      {
+        jobId,
+        remotePath,
+        localPath,
+        options,
+      },
+      "Starting directory comparison",
+    );
 
     const startTime = Date.now();
 
@@ -53,22 +76,22 @@ export class FileScanner {
       // Emit scan start via log message
       this.eventEmitter?.emitLogMessage({
         jobId,
-        level: 'info',
+        level: "info",
         message: `Starting directory scan: ${remotePath} -> ${localPath}`,
-        source: 'scanner',
-        timestamp: new Date().toISOString()
+        source: "scanner",
+        timestamp: new Date().toISOString(),
       });
 
-      logger.info('Starting remote directory scan', { jobId, remotePath });
+      logger.info({ jobId, remotePath }, "Starting remote directory scan");
 
       // Scan remote directory
       const remoteProgress = (progress: ScanProgress) => {
         this.eventEmitter?.emitLogMessage({
           jobId,
-          level: 'debug',
+          level: "debug",
           message: `Remote scan: ${progress.currentPath} (${progress.filesScanned} files, ${progress.bytesScanned} bytes)`,
-          source: 'scanner',
-          timestamp: new Date().toISOString()
+          source: "scanner",
+          timestamp: new Date().toISOString(),
         });
       };
 
@@ -76,25 +99,28 @@ export class FileScanner {
         config,
         remotePath,
         options,
-        remoteProgress
+        remoteProgress,
       );
 
-      logger.info('Remote scan completed', { 
-        jobId, 
-        filesFound: remoteResult.files.length,
-        totalSize: remoteResult.totalSize 
-      });
+      logger.info(
+        {
+          jobId,
+          filesFound: remoteResult.files.length,
+          totalSize: remoteResult.totalSize,
+        },
+        "Remote scan completed",
+      );
 
       // Scan local directory
-      logger.info('Starting local directory scan', { jobId, localPath });
-      
+      logger.info({ jobId, localPath }, "Starting local directory scan");
+
       const localProgress = (progress: ScanProgress) => {
         this.eventEmitter?.emitLogMessage({
           jobId,
-          level: 'debug',
+          level: "debug",
           message: `Local scan: ${progress.currentPath} (${progress.filesScanned} files, ${progress.bytesScanned} bytes)`,
-          source: 'scanner',
-          timestamp: new Date().toISOString()
+          source: "scanner",
+          timestamp: new Date().toISOString(),
         });
       };
 
@@ -103,21 +129,30 @@ export class FileScanner {
         localResult = await this.localScanner.scanDirectory(
           localPath,
           options,
-          localProgress
+          localProgress,
         );
-        
-        logger.info('Local scan completed', { 
-          jobId, 
-          filesFound: localResult.files.length,
-          totalSize: localResult.totalSize 
-        });
+
+        logger.info(
+          {
+            jobId,
+            filesFound: localResult.files.length,
+            totalSize: localResult.totalSize,
+          },
+          "Local scan completed",
+        );
       } catch (localError) {
-        logger.error('Local scan failed', {
-          jobId,
-          localPath,
-          error: localError instanceof Error ? localError.message : 'Unknown error',
-          stack: localError instanceof Error ? localError.stack : undefined
-        });
+        logger.error(
+          {
+            jobId,
+            localPath,
+            error:
+              localError instanceof Error
+                ? localError.message
+                : "Unknown error",
+            stack: localError instanceof Error ? localError.stack : undefined,
+          },
+          "Local scan failed",
+        );
         throw localError;
       }
 
@@ -126,8 +161,14 @@ export class FileScanner {
       const localFiles = this.createFileMap(localResult.files, localPath);
 
       // Create directory maps for directory-level operations
-      const remoteDirectories = this.createDirectoryMap(remoteResult.files, remotePath);
-      const localDirectories = this.createDirectoryMap(localResult.files, localPath);
+      const remoteDirectories = this.createDirectoryMap(
+        remoteResult.files,
+        remotePath,
+      );
+      const localDirectories = this.createDirectoryMap(
+        localResult.files,
+        localPath,
+      );
 
       // Compare files and determine states
       const comparison = await this.performComparison(
@@ -138,7 +179,7 @@ export class FileScanner {
         localFiles,
         remoteDirectories,
         localDirectories,
-        autoQueueConfig
+        autoQueueConfig,
       );
 
       const duration = Date.now() - startTime;
@@ -154,21 +195,27 @@ export class FileScanner {
         filesUpdated: comparison.stats.desynced,
         filesRemoved: comparison.stats.localOnly,
         duration,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
 
-      logger.info('Directory comparison completed', {
-        jobId,
-        duration,
-        stats: comparison.stats
-      });
+      logger.info(
+        {
+          jobId,
+          duration,
+          stats: comparison.stats,
+        },
+        "Directory comparison completed",
+      );
 
       return comparison;
     } catch (error) {
-      logger.error('Directory comparison failed', {
-        jobId,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
+      logger.error(
+        {
+          jobId,
+          error: error instanceof Error ? error.message : "Unknown error",
+        },
+        "Directory comparison failed",
+      );
       throw error;
     }
   }
@@ -180,7 +227,7 @@ export class FileScanner {
     config: SSHConnectionConfig,
     remotePath: string,
     localPath: string,
-    relativePath: string
+    relativePath: string,
   ): Promise<FileComparison> {
     const remoteFilePath = this.joinPaths(remotePath, relativePath);
     const localFilePath = this.joinPaths(localPath, relativePath);
@@ -188,37 +235,47 @@ export class FileScanner {
     try {
       const [remoteExists, localExists] = await Promise.all([
         this.remoteScanner.pathExists(config, remoteFilePath),
-        this.localScanner.pathExists(localFilePath)
+        this.localScanner.pathExists(localFilePath),
       ]);
 
       let remote: FileMetadata | undefined;
       let local: FileMetadata | undefined;
 
       if (remoteExists) {
-        remote = await this.remoteScanner.scanDirectory(config, remoteFilePath)
-          .then(result => result.files[0])
+        remote = await this.remoteScanner
+          .scanDirectory(config, remoteFilePath)
+          .then((result) => result.files[0])
           .catch(() => undefined);
       }
 
       if (localExists) {
-        local = await this.localScanner.getFileInfo(localFilePath)
+        local = await this.localScanner
+          .getFileInfo(localFilePath)
           .catch(() => undefined);
       }
 
       const state = this.determineFileState(remote, local);
-      const comparison = this.createFileComparison(relativePath, remote, local, state);
+      const comparison = this.createFileComparison(
+        relativePath,
+        remote,
+        local,
+        state,
+      );
 
       return comparison;
     } catch (error) {
-      logger.error('Failed to get file comparison', {
-        relativePath,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-      
+      logger.error(
+        {
+          relativePath,
+          error: error instanceof Error ? error.message : "Unknown error",
+        },
+        "Failed to get file comparison",
+      );
+
       return {
         relativePath,
-        filename: relativePath.split('/').pop() || relativePath,
-        state: ScanFileState.FAILED
+        filename: relativePath.split("/").pop() || relativePath,
+        state: ScanFileState.FAILED,
       };
     }
   }
@@ -231,7 +288,7 @@ export class FileScanner {
     localFiles: Map<string, FileMetadata>,
     remoteDirectories: Map<string, DirectoryMetadata>,
     localDirectories: Map<string, DirectoryMetadata>,
-    autoQueueConfig?: AutoQueueConfig
+    autoQueueConfig?: AutoQueueConfig,
   ): Promise<DirectoryComparison> {
     const stats: ComparisonStats = {
       totalRemote: remoteFiles.size,
@@ -247,7 +304,7 @@ export class FileScanner {
       directoriesLocalOnly: 0,
       directoriesDesynced: 0,
       totalSizeRemote: 0,
-      totalSizeLocal: 0
+      totalSizeLocal: 0,
     };
 
     // Calculate total sizes
@@ -260,16 +317,19 @@ export class FileScanner {
 
     // Get all unique relative paths (files and directories)
     const allFilePaths = new Set([...remoteFiles.keys(), ...localFiles.keys()]);
-    const allDirectoryPaths = new Set([...remoteDirectories.keys(), ...localDirectories.keys()]);
+    const allDirectoryPaths = new Set([
+      ...remoteDirectories.keys(),
+      ...localDirectories.keys(),
+    ]);
     const allPaths = new Set([...allFilePaths, ...allDirectoryPaths]);
-    
+
     // Emit comparison progress via log
     this.eventEmitter?.emitLogMessage({
       jobId,
-      level: 'info',
+      level: "info",
       message: `Comparing ${allPaths.size} items (${allFilePaths.size} files, ${allDirectoryPaths.size} directories) between remote and local`,
-      source: 'scanner',
-      timestamp: new Date().toISOString()
+      source: "scanner",
+      timestamp: new Date().toISOString(),
     });
 
     let processedFiles = 0;
@@ -277,7 +337,7 @@ export class FileScanner {
 
     // Connect to database and prepare FileState operations
     await connectDB();
-    const { FileState } = await import('@/models');
+    const { FileState } = await import("@/models");
 
     // Clear existing FileState records for this job
     await FileState.deleteMany({ jobId });
@@ -289,11 +349,15 @@ export class FileScanner {
 
     for (let i = 0; i < pathArray.length; i += batchSize) {
       const batch = pathArray.slice(i, i + batchSize);
-      
+
       for (const relativePath of batch) {
-        const remote = remoteFiles.get(relativePath) || remoteDirectories.get(relativePath);
-        const local = localFiles.get(relativePath) || localDirectories.get(relativePath);
-        const isDirectory = remoteDirectories.has(relativePath) || localDirectories.has(relativePath);
+        const remote =
+          remoteFiles.get(relativePath) || remoteDirectories.get(relativePath);
+        const local =
+          localFiles.get(relativePath) || localDirectories.get(relativePath);
+        const isDirectory =
+          remoteDirectories.has(relativePath) ||
+          localDirectories.has(relativePath);
         const state = this.determineFileState(remote, local);
 
         // Update statistics
@@ -320,7 +384,11 @@ export class FileScanner {
             case ScanFileState.REMOTE_ONLY:
               stats.remoteOnly++;
               // Check for auto-queue
-              if (autoQueueConfig?.enabled && remote && this.shouldAutoQueue(remote, autoQueueConfig)) {
+              if (
+                autoQueueConfig?.enabled &&
+                remote &&
+                this.shouldAutoQueue(remote, autoQueueConfig)
+              ) {
                 queuedFiles.push(relativePath);
               }
               break;
@@ -334,9 +402,11 @@ export class FileScanner {
         }
 
         // Create FileState record
-        const filename = relativePath.split('/').pop() || relativePath;
-        const parentPath = relativePath.includes('/') ? relativePath.substring(0, relativePath.lastIndexOf('/')) : '';
-        
+        const filename = relativePath.split("/").pop() || relativePath;
+        const parentPath = relativePath.includes("/")
+          ? relativePath.substring(0, relativePath.lastIndexOf("/"))
+          : "";
+
         const fileStateRecord = {
           jobId,
           relativePath,
@@ -347,37 +417,41 @@ export class FileScanner {
             size: remote?.size,
             modTime: remote?.modTime,
             exists: !!remote,
-            isDirectory: remote?.isDirectory || false
+            isDirectory: remote?.isDirectory || false,
           },
           local: {
             size: local?.size,
             modTime: local?.modTime,
             exists: !!local,
-            isDirectory: local?.isDirectory || false
+            isDirectory: local?.isDirectory || false,
           },
           syncState: this.mapFileStateToSyncState(state),
           transfer: {
             progress: 0,
-            retryCount: 0
+            retryCount: 0,
           },
-          directorySize: isDirectory ? (remote?.size || local?.size || 0) : 0,
-          fileCount: isDirectory && 'fileCount' in (remote || local || {}) ? 
-            ((remote as DirectoryMetadata)?.fileCount || (local as DirectoryMetadata)?.fileCount || 0) : 0,
+          directorySize: isDirectory ? remote?.size || local?.size || 0 : 0,
+          fileCount:
+            isDirectory && "fileCount" in (remote || local || {})
+              ? (remote as DirectoryMetadata)?.fileCount ||
+                (local as DirectoryMetadata)?.fileCount ||
+                0
+              : 0,
           lastSeen: new Date(),
-          addedAt: new Date()
+          addedAt: new Date(),
         };
 
         fileStateRecords.push(fileStateRecord);
         processedFiles++;
-        
+
         // Emit progress update every 100 files
         if (processedFiles % 100 === 0) {
           this.eventEmitter?.emitLogMessage({
             jobId,
-            level: 'debug',
+            level: "debug",
             message: `Comparison progress: ${processedFiles}/${allPaths.size} files processed`,
-            source: 'scanner',
-            timestamp: new Date().toISOString()
+            source: "scanner",
+            timestamp: new Date().toISOString(),
           });
         }
       }
@@ -386,59 +460,71 @@ export class FileScanner {
     // Bulk insert FileState records
     if (fileStateRecords.length > 0) {
       await FileState.insertMany(fileStateRecords);
-      logger.info('Persisted FileState records to database', {
-        jobId,
-        count: fileStateRecords.length
-      });
+      logger.info(
+        {
+          jobId,
+          count: fileStateRecords.length,
+        },
+        "Persisted FileState records to database",
+      );
 
       // Calculate and update directory statistics
-      logger.info('Calculating directory statistics', { jobId });
+      logger.info({ jobId }, "Calculating directory statistics");
       try {
         const allFileStates = fileStateRecords as unknown as FileStateRecord[];
         const statsMap = calculateAllDirectoryStats(allFileStates);
-        
+
         // Update directories with calculated statistics
         const bulkOps = [];
         for (const [directoryPath, stats] of statsMap) {
           bulkOps.push({
             updateOne: {
-              filter: { 
+              filter: {
                 jobId,
                 relativePath: directoryPath,
-                isDirectory: true
+                isDirectory: true,
               },
               update: {
                 $set: {
                   directorySize: stats.directorySize,
-                  fileCount: stats.fileCount
-                }
-              }
-            }
+                  fileCount: stats.fileCount,
+                },
+              },
+            },
           });
         }
 
         if (bulkOps.length > 0) {
           await FileState.bulkWrite(bulkOps);
-          logger.info('Updated directory statistics', {
-            jobId,
-            directoriesUpdated: bulkOps.length
-          });
+          logger.info(
+            {
+              jobId,
+              directoriesUpdated: bulkOps.length,
+            },
+            "Updated directory statistics",
+          );
         }
       } catch (error) {
-        logger.error('Failed to calculate directory statistics', {
-          jobId,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
+        logger.error(
+          {
+            jobId,
+            error: error instanceof Error ? error.message : "Unknown error",
+          },
+          "Failed to calculate directory statistics",
+        );
       }
     }
 
     // Log auto-queued files
     if (queuedFiles.length > 0) {
-      logger.info('Auto-queued files for download', {
-        jobId,
-        count: queuedFiles.length,
-        files: queuedFiles.slice(0, 10) // Log first 10 files
-      });
+      logger.info(
+        {
+          jobId,
+          count: queuedFiles.length,
+          files: queuedFiles.slice(0, 10), // Log first 10 files
+        },
+        "Auto-queued files for download",
+      );
     }
 
     return {
@@ -449,26 +535,32 @@ export class FileScanner {
       remoteDirectories,
       localDirectories,
       comparedAt: new Date(),
-      stats
+      stats,
     };
   }
 
-  private createFileMap(files: FileMetadata[], basePath: string): Map<string, FileMetadata> {
+  private createFileMap(
+    files: FileMetadata[],
+    basePath: string,
+  ): Map<string, FileMetadata> {
     const fileMap = new Map<string, FileMetadata>();
-    
+
     for (const file of files) {
       if (!file.isDirectory) {
         const relativePath = this.getRelativePath(file.path, basePath);
         fileMap.set(relativePath, file);
       }
     }
-    
+
     return fileMap;
   }
 
-  private createDirectoryMap(files: FileMetadata[], basePath: string): Map<string, DirectoryMetadata> {
+  private createDirectoryMap(
+    files: FileMetadata[],
+    basePath: string,
+  ): Map<string, DirectoryMetadata> {
     const directoryMap = new Map<string, DirectoryMetadata>();
-    
+
     for (const file of files) {
       if (file.isDirectory) {
         const relativePath = this.getRelativePath(file.path, basePath);
@@ -478,49 +570,54 @@ export class FileScanner {
           totalSize: file.size,
           fileCount: 0,
           childFiles: [],
-          childDirectories: []
+          childDirectories: [],
         };
         directoryMap.set(relativePath, directoryMetadata);
       }
     }
-    
+
     return directoryMap;
   }
 
   private getRelativePath(fullPath: string, basePath: string): string {
     // Normalize paths and get relative path
-    const normalizedBase = basePath.replace(/\\/g, '/').replace(/\/$/, '');
-    const normalizedFull = fullPath.replace(/\\/g, '/');
-    
+    const normalizedBase = basePath.replace(/\\/g, "/").replace(/\/$/, "");
+    const normalizedFull = fullPath.replace(/\\/g, "/");
+
     if (normalizedFull.startsWith(normalizedBase)) {
-      return normalizedFull.substring(normalizedBase.length).replace(/^\//, '');
+      return normalizedFull.substring(normalizedBase.length).replace(/^\//, "");
     }
-    
+
     return normalizedFull;
   }
 
-  private determineFileState(remote?: FileMetadata, local?: FileMetadata): ScanFileState {
+  private determineFileState(
+    remote?: FileMetadata,
+    local?: FileMetadata,
+  ): ScanFileState {
     if (!remote && !local) {
       return ScanFileState.FAILED;
     }
-    
+
     if (!remote) {
       return ScanFileState.LOCAL_ONLY;
     }
-    
+
     if (!local) {
       return ScanFileState.REMOTE_ONLY;
     }
-    
+
     // Both files exist - check if they're synced
     const sizeDiff = Math.abs(remote.size - local.size);
-    const timeDiff = Math.abs(remote.modTime.getTime() - local.modTime.getTime());
-    
+    const timeDiff = Math.abs(
+      remote.modTime.getTime() - local.modTime.getTime(),
+    );
+
     // Consider files synced if size matches and time difference is less than 2 seconds
     if (sizeDiff === 0 && timeDiff < 2000) {
       return ScanFileState.SYNCED;
     }
-    
+
     return ScanFileState.DESYNCED;
   }
 
@@ -528,28 +625,32 @@ export class FileScanner {
     relativePath: string,
     remote?: FileMetadata,
     local?: FileMetadata,
-    state?: ScanFileState
+    state?: ScanFileState,
   ): FileComparison {
-    const filename = relativePath.split('/').pop() || relativePath;
+    const filename = relativePath.split("/").pop() || relativePath;
     const actualState = state || this.determineFileState(remote, local);
-    
+
     const comparison: FileComparison = {
       relativePath,
       filename,
       state: actualState,
       remote,
-      local
+      local,
     };
 
     if (remote && local) {
       comparison.sizeDifference = remote.size - local.size;
-      comparison.timeDifference = remote.modTime.getTime() - local.modTime.getTime();
+      comparison.timeDifference =
+        remote.modTime.getTime() - local.modTime.getTime();
     }
 
     return comparison;
   }
 
-  private shouldAutoQueue(file: FileMetadata, config: AutoQueueConfig): boolean {
+  private shouldAutoQueue(
+    file: FileMetadata,
+    config: AutoQueueConfig,
+  ): boolean {
     // Check file size limits
     if (config.minFileSize && file.size < config.minFileSize) {
       return false;
@@ -559,20 +660,23 @@ export class FileScanner {
     }
 
     // Check extension filters
-    const extension = file.name.split('.').pop()?.toLowerCase() || '';
-    
+    const extension = file.name.split(".").pop()?.toLowerCase() || "";
+
     if (config.excludeExtensions?.includes(extension)) {
       return false;
     }
-    
-    if (config.includeExtensions?.length && !config.includeExtensions.includes(extension)) {
+
+    if (
+      config.includeExtensions?.length &&
+      !config.includeExtensions.includes(extension)
+    ) {
       return false;
     }
 
     // Check pattern matchers
     for (const matcher of config.patterns) {
       const matches = this.matchesPatternMatcher(file.name, file.path, matcher);
-      
+
       if (matcher.isInclude && !matches) {
         return false;
       }
@@ -584,51 +688,55 @@ export class FileScanner {
     return true;
   }
 
-  private matchesPatternMatcher(filename: string, fullPath: string, matcher: PatternMatcher): boolean {
+  private matchesPatternMatcher(
+    filename: string,
+    fullPath: string,
+    matcher: PatternMatcher,
+  ): boolean {
     const targets = [filename, fullPath];
-    
+
     for (const pattern of matcher.patterns) {
       for (const target of targets) {
         const text = matcher.caseSensitive ? target : target.toLowerCase();
         const pat = matcher.caseSensitive ? pattern : pattern.toLowerCase();
-        
+
         if (this.matchesGlob(text, pat)) {
           return true;
         }
       }
     }
-    
+
     return false;
   }
 
   private matchesGlob(text: string, pattern: string): boolean {
     const regexPattern = pattern
-      .replace(/\./g, '\\.')
-      .replace(/\*/g, '.*')
-      .replace(/\?/g, '.');
-    
+      .replace(/\./g, "\\.")
+      .replace(/\*/g, ".*")
+      .replace(/\?/g, ".");
+
     const regex = new RegExp(`^${regexPattern}$`);
     return regex.test(text);
   }
 
   private joinPaths(basePath: string, relativePath: string): string {
-    return basePath.replace(/\/$/, '') + '/' + relativePath.replace(/^\//, '');
+    return basePath.replace(/\/$/, "") + "/" + relativePath.replace(/^\//, "");
   }
 
   private mapFileStateToSyncState(state: ScanFileState): string {
     switch (state) {
       case ScanFileState.SYNCED:
-        return 'synced';
+        return "synced";
       case ScanFileState.REMOTE_ONLY:
-        return 'remote_only';
+        return "remote_only";
       case ScanFileState.LOCAL_ONLY:
-        return 'local_only';
+        return "local_only";
       case ScanFileState.DESYNCED:
-        return 'desynced';
+        return "desynced";
       case ScanFileState.FAILED:
-        return 'failed';
+        return "failed";
       default:
-        return 'failed';
+        return "failed";
     }
   }
 }

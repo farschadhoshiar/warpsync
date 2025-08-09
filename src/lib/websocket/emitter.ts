@@ -33,7 +33,7 @@ export class EventEmitter {
 
       // Debug logging removed to reduce noise
     } catch (error) {
-      logger.error("Failed to emit file state update", { error, data });
+      logger.error("Failed to emit file state update", { error });
     }
   }
 
@@ -73,7 +73,7 @@ export class EventEmitter {
         status: data.status,
       });
     } catch (error) {
-      logger.error("Failed to emit unified transfer progress", { error, data });
+      logger.error("Failed to emit unified transfer progress", { error });
     }
   }
 
@@ -96,7 +96,7 @@ export class EventEmitter {
         jobId: data.jobId,
       });
     } catch (error) {
-      logger.error("Failed to emit transfer status", { error, data });
+      logger.error("Failed to emit transfer status", { error });
     }
   }
 
@@ -115,7 +115,65 @@ export class EventEmitter {
         duration: data.duration,
       });
     } catch (error) {
-      logger.error("Failed to emit scan completion", { error, data });
+      logger.error("Failed to emit scan completion", { error });
+    }
+  }
+
+  // ✅ Emit scan SSH connecting using new broadcasting
+  emitScanSSHConnecting(data: SocketEvents["scan:ssh-connecting"]) {
+    try {
+      if (data.jobId && isValidObjectId(data.jobId)) {
+        broadcastJobProgress(this.io, data.jobId, {
+          type: "scan:ssh-connecting",
+          ...data,
+        });
+      }
+
+      logger.info("Emitted scan SSH connecting", {
+        jobId: data.jobId,
+        serverAddress: data.serverAddress,
+      });
+    } catch (error) {
+      logger.error("Failed to emit scan SSH connecting", { error });
+    }
+  }
+
+  // ✅ Emit scan SSH connected using new broadcasting
+  emitScanSSHConnected(data: SocketEvents["scan:ssh-connected"]) {
+    try {
+      if (data.jobId && isValidObjectId(data.jobId)) {
+        broadcastJobProgress(this.io, data.jobId, {
+          type: "scan:ssh-connected",
+          ...data,
+        });
+      }
+
+      logger.info("Emitted scan SSH connected", {
+        jobId: data.jobId,
+        serverAddress: data.serverAddress,
+      });
+    } catch (error) {
+      logger.error("Failed to emit scan SSH connected", { error });
+    }
+  }
+
+  // ✅ Emit scan syncing states using new broadcasting
+  emitScanSyncingStates(data: SocketEvents["scan:syncing-states"]) {
+    try {
+      if (data.jobId && isValidObjectId(data.jobId)) {
+        broadcastJobProgress(this.io, data.jobId, {
+          type: "scan:syncing-states",
+          ...data,
+        });
+      }
+
+      logger.info("Emitted scan syncing states", {
+        jobId: data.jobId,
+        remotePath: data.remotePath,
+        localPath: data.localPath,
+      });
+    } catch (error) {
+      logger.error("Failed to emit scan syncing states", { error });
     }
   }
 
@@ -128,12 +186,6 @@ export class EventEmitter {
           type: "log:message",
           ...data,
         });
-      } else if (data.serverId && isValidObjectId(data.serverId)) {
-        // Send to server room
-        broadcastServerStatus(this.io, data.serverId, {
-          type: "log:message",
-          ...data,
-        });
       } else {
         // Send globally
         broadcastGlobalMessage(this.io, "log:message", data);
@@ -141,7 +193,7 @@ export class EventEmitter {
 
       // Debug logging removed to reduce noise
     } catch (error) {
-      logger.error("Failed to emit log message", { error, data });
+      logger.error("Failed to emit log message", { error });
     }
   }
 
@@ -164,7 +216,7 @@ export class EventEmitter {
         duration: data.duration,
       });
     } catch (error) {
-      logger.error("Failed to emit connection test", { error, data });
+      logger.error("Failed to emit connection test", { error });
     }
   }
 
@@ -195,7 +247,7 @@ export class EventEmitter {
         serverId: data.serverId,
       });
     } catch (error) {
-      logger.error("Failed to emit error event", { error, data });
+      logger.error("Failed to emit error event", { error });
     }
   }
 
@@ -219,11 +271,7 @@ export class EventEmitter {
         progressType: progressData.type || "unknown",
       });
     } catch (error) {
-      logger.error("Failed to emit job progress", {
-        error,
-        jobId,
-        progressData,
-      });
+      logger.error("Failed to emit job progress", { error });
     }
   }
 
@@ -247,11 +295,7 @@ export class EventEmitter {
         statusType: statusData.type || "unknown",
       });
     } catch (error) {
-      logger.error("Failed to emit server status", {
-        error,
-        serverId,
-        statusData,
-      });
+      logger.error("Failed to emit server status", { error });
     }
   }
 
@@ -302,10 +346,9 @@ export function emitIfAvailable<T extends keyof SocketEvents>(
 ): boolean {
   const emitter = getEventEmitter();
   if (!emitter) {
-    logger.warn("Event emitter not available", { event });
+    logger.warn("Event emitter not available", { event: String(event) });
     return false;
   }
-
   try {
     switch (event) {
       case "file:state:update":
@@ -322,6 +365,21 @@ export function emitIfAvailable<T extends keyof SocketEvents>(
       case "scan:complete":
         emitter.emitScanComplete(data as SocketEvents["scan:complete"]);
         break;
+      case "scan:ssh-connecting":
+        emitter.emitScanSSHConnecting(
+          data as SocketEvents["scan:ssh-connecting"],
+        );
+        break;
+      case "scan:ssh-connected":
+        emitter.emitScanSSHConnected(
+          data as SocketEvents["scan:ssh-connected"],
+        );
+        break;
+      case "scan:syncing-states":
+        emitter.emitScanSyncingStates(
+          data as SocketEvents["scan:syncing-states"],
+        );
+        break;
       case "log:message":
         emitter.emitLogMessage(data as SocketEvents["log:message"]);
         break;
@@ -334,7 +392,7 @@ export function emitIfAvailable<T extends keyof SocketEvents>(
     }
     return true;
   } catch (error) {
-    logger.error("Failed to emit event", { event, error });
+    logger.error("Failed to emit event", { event: String(event), error });
     return false;
   }
 }
