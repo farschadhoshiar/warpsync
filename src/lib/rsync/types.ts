@@ -5,46 +5,47 @@ export interface RsyncConfig {
     host: string;
     port: number;
     username: string;
-    privateKey: string;  // SSH private key content (required for SSH key auth only)
+    privateKey: string; // SSH private key content (required for SSH key auth only)
   };
   options: RsyncOptions;
 }
 
 export interface RsyncOptions {
-  archive?: boolean;           // -a (archive mode)
-  verbose?: boolean;           // -v (verbose)
-  compress?: boolean;          // -z (compress)
-  partial?: boolean;           // --partial (keep partial files)
-  progress?: boolean;          // --progress (show progress)
-  delete?: boolean;            // --delete (delete extraneous files)
-  excludeFrom?: string;        // --exclude-from=FILE
-  includeFrom?: string;        // --include-from=FILE
-  exclude?: string[];          // --exclude=PATTERN
-  include?: string[];          // --include=PATTERN
-  dryRun?: boolean;           // --dry-run (perform trial run)
-  checksum?: boolean;         // -c (checksum-based comparison)
-  times?: boolean;            // -t (preserve modification times)
-  perms?: boolean;            // -p (preserve permissions)
-  owner?: boolean;            // -o (preserve owner)
-  group?: boolean;            // -g (preserve group)
-  bandwidth?: number;         // --bwlimit=RATE (bandwidth limit in KB/s)
-  timeout?: number;           // --timeout=SECONDS
-  maxSize?: string;           // --max-size=SIZE
-  minSize?: string;           // --min-size=SIZE
-  inPlace?: boolean;          // --inplace (update files in-place)
-  wholefile?: boolean;        // -W (copy whole files)
-  sparseFiles?: boolean;      // -S (handle sparse files efficiently)
-  hardLinks?: boolean;        // -H (preserve hard links)
-  numericIds?: boolean;       // --numeric-ids (don't map uid/gid values)
-  itemizeChanges?: boolean;   // -i (itemize changes)
-  stats?: boolean;            // --stats (give file transfer stats)
-  humanReadable?: boolean;    // -h (human readable numbers)
-  logFile?: string;          // --log-file=FILE
-  tempDir?: string;          // --temp-dir=DIR
-  sshOptions?: string[];     // additional SSH options
-  createDirs?: boolean;       // --dirs (transfer directories without recursing)
+  archive?: boolean; // -a (archive mode)
+  verbose?: boolean; // -v (verbose)
+  compress?: boolean; // -z (compress)
+  partial?: boolean; // --partial (keep partial files)
+  progress?: boolean; // --progress (show progress)
+  delete?: boolean; // --delete (delete extraneous files)
+  excludeFrom?: string; // --exclude-from=FILE
+  includeFrom?: string; // --include-from=FILE
+  exclude?: string[]; // --exclude=PATTERN
+  include?: string[]; // --include=PATTERN
+  dryRun?: boolean; // --dry-run (perform trial run)
+  checksum?: boolean; // -c (checksum-based comparison)
+  times?: boolean; // -t (preserve modification times)
+  perms?: boolean; // -p (preserve permissions)
+  owner?: boolean; // -o (preserve owner)
+  group?: boolean; // -g (preserve group)
+  bandwidth?: number; // --bwlimit=RATE (bandwidth limit in KB/s)
+  timeout?: number; // --timeout=SECONDS
+  maxSize?: string; // --max-size=SIZE
+  minSize?: string; // --min-size=SIZE
+  inPlace?: boolean; // --inplace (update files in-place)
+  wholefile?: boolean; // -W (copy whole files)
+  sparseFiles?: boolean; // -S (handle sparse files efficiently)
+  hardLinks?: boolean; // -H (preserve hard links)
+  numericIds?: boolean; // --numeric-ids (don't map uid/gid values)
+  itemizeChanges?: boolean; // -i (itemize changes)
+  stats?: boolean; // --stats (give file transfer stats)
+  humanReadable?: boolean; // -h (human readable numbers)
+  logFile?: string; // --log-file=FILE
+  tempDir?: string; // --temp-dir=DIR
+  sshOptions?: string[]; // additional SSH options
+  createDirs?: boolean; // --dirs (transfer directories without recursing)
   preserveHierarchy?: boolean; // --mkpath (create missing path components)
-  recursive?: boolean;        // -r (recursive)
+  recursive?: boolean; // -r (recursive)
+  secludedArgs?: boolean; // -s (use protocol to safely send args)
 }
 
 export interface RsyncProgress {
@@ -106,34 +107,34 @@ export interface RsyncProcess {
 }
 
 export enum ProcessStatus {
-  PENDING = 'pending',
-  STARTING = 'starting',
-  RUNNING = 'running',
-  COMPLETED = 'completed',
-  FAILED = 'failed',
-  CANCELLED = 'cancelled',
-  TIMEOUT = 'timeout'
+  PENDING = "pending",
+  STARTING = "starting",
+  RUNNING = "running",
+  COMPLETED = "completed",
+  FAILED = "failed",
+  CANCELLED = "cancelled",
+  TIMEOUT = "timeout",
 }
 
 export interface RsyncManagerConfig {
   maxConcurrentProcesses: number;
-  defaultTimeout: number;        // in milliseconds
+  defaultTimeout: number; // in milliseconds
   progressUpdateInterval: number; // in milliseconds
-  logLevel: 'debug' | 'info' | 'warn' | 'error';
+  logLevel: "debug" | "info" | "warn" | "error";
   retryAttempts: number;
-  retryDelay: number;           // in milliseconds
+  retryDelay: number; // in milliseconds
   tempDirectory?: string;
   preservePartialFiles: boolean;
 }
 
 export const DEFAULT_RSYNC_CONFIG: RsyncManagerConfig = {
   maxConcurrentProcesses: 3,
-  defaultTimeout: 3600000,      // 1 hour
-  progressUpdateInterval: 1000,  // 1 second
-  logLevel: 'info',
+  defaultTimeout: 3600000, // 1 hour
+  progressUpdateInterval: 1000, // 1 second
+  logLevel: "info",
   retryAttempts: 3,
-  retryDelay: 5000,             // 5 seconds
-  preservePartialFiles: true
+  retryDelay: 5000, // 5 seconds
+  preservePartialFiles: true,
 };
 
 export const DEFAULT_RSYNC_OPTIONS: RsyncOptions = {
@@ -146,5 +147,6 @@ export const DEFAULT_RSYNC_OPTIONS: RsyncOptions = {
   perms: true,
   itemizeChanges: true,
   stats: true,
-  humanReadable: true
+  humanReadable: true,
+  secludedArgs: true,
 };

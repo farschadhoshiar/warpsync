@@ -177,6 +177,7 @@ export class RsyncCommandBuilder {
     if (options.createDirs) args.push("--dirs");
     if (options.preserveHierarchy) args.push("--mkpath");
     if (options.recursive) args.push("-r");
+    if (options.secludedArgs) args.push("-s");
   }
 
   private static addFilterOptions(args: string[], options: RsyncOptions): void {
@@ -277,6 +278,7 @@ export class RsyncCommandBuilder {
           originalPath: config.source,
           escapedPath: escapedPath,
           sshHost: host,
+          escapingMethod: "native-rsync-with-secluded-args",
         });
       }
 
@@ -296,13 +298,14 @@ export class RsyncCommandBuilder {
     }
 
     // Format destination path (always local in our case)
-    // Local paths use standard shell escaping
-    const escapedDestination = escapeShellArg(config.destination);
+    // With --secluded-args, rsync handles local paths natively too
+    const escapedDestination = config.destination;
 
     if (isDevelopment && config.destination.includes(" ")) {
       devLogger.info("📁 DESTINATION PATH ESCAPING (DEV)", {
         originalPath: config.destination,
         escapedPath: escapedDestination,
+        escapingMethod: "native-rsync-with-secluded-args",
       });
     }
 
