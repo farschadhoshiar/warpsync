@@ -3,31 +3,24 @@
  * Handles all download scenarios through a single interface
  */
 
-import { logger } from "@/lib/logger";
-import { TransferQueue } from "@/lib/queue/transfer-queue";
-import {
-  TransferType,
-  TransferPriority,
-  TransferStatus,
-  DEFAULT_QUEUE_CONFIG,
-  DEFAULT_RETRY_POLICY,
-} from "@/lib/queue/types";
-import { DatabaseSyncedTransferQueue } from "@/lib/queue/database-synced-transfer-queue";
-import { EventEmitter } from "@/lib/websocket/emitter";
-import connectDB from "@/lib/mongodb";
-import { parseCompositeId, isValidObjectId } from "@/lib/utils";
-import { z } from "zod";
-import path from "path";
-import fs from "fs/promises";
+import { logger } from '@/lib/logger';
+import { TransferQueue } from '@/lib/queue/transfer-queue';
+import { TransferType, TransferPriority, TransferStatus } from '@/lib/queue/types';
+import { EventEmitter } from '@/lib/websocket/emitter';
+import connectDB from '@/lib/mongodb';
+import { parseCompositeId, isValidObjectId } from '@/lib/utils';
+import { z } from 'zod';
+import path from 'path';
+import fs from 'fs/promises';
 
 // Request and response interfaces
 export interface UnifiedDownloadRequest {
-  source: "manual" | "automatic" | "scheduled";
-  scope: "single" | "job" | "directory" | "pattern" | "bulk";
+  source: 'manual' | 'automatic' | 'scheduled';
+  scope: 'single' | 'job' | 'directory' | 'pattern' | 'bulk';
   targets: string[]; // fileIds, directoryPaths, or patterns
   options: {
     jobId?: string;
-    priority?: "LOW" | "NORMAL" | "HIGH" | "URGENT";
+    priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
     localPath?: string;
     rsyncOptions?: Record<string, string | number | boolean>;
     dryRun?: boolean;
@@ -88,59 +81,49 @@ interface QueueResult {
 
 // Validation schema
 export const UnifiedDownloadSchema = z.object({
-  source: z.enum(["manual", "automatic", "scheduled"]).default("manual"),
-  scope: z.enum(["single", "job", "directory", "pattern", "bulk"]),
+  source: z.enum(['manual', 'automatic', 'scheduled']).default('manual'),
+  scope: z.enum(['single', 'job', 'directory', 'pattern', 'bulk']),
   targets: z.array(z.string()).min(1),
-  options: z
-    .object({
-      jobId: z.string().optional(),
-      priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]).optional(),
-      localPath: z.string().optional(),
-      dryRun: z.boolean().default(false),
-      createStructure: z.boolean().default(true),
-      preserveHierarchy: z.boolean().default(true),
-      overwriteExisting: z.boolean().default(false),
-      rsyncOptions: z
-        .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
-        .optional(),
-    })
-    .optional()
-    .default(() => ({
-      dryRun: false,
-      createStructure: true,
-      preserveHierarchy: true,
-      overwriteExisting: false,
-    })),
+  options: z.object({
+    jobId: z.string().optional(),
+    priority: z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']).optional(),
+    localPath: z.string().optional(),
+    dryRun: z.boolean().default(false),
+    createStructure: z.boolean().default(true),
+    preserveHierarchy: z.boolean().default(true),
+    overwriteExisting: z.boolean().default(false),
+    rsyncOptions: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional()
+  }).optional().default(() => ({
+    dryRun: false,
+    createStructure: true,
+    preserveHierarchy: true,
+    overwriteExisting: false
+  }))
 });
 
 /**
  * Unified Download Service Implementation
  */
-class UnifiedDownloadService {
-  private transferQueue: DatabaseSyncedTransferQueue;
+export class UnifiedDownloadService {
+  private transferQueue: TransferQueue;
   private eventEmitter?: EventEmitter;
 
-  constructor(
-    transferQueue: DatabaseSyncedTransferQueue,
-    eventEmitter?: EventEmitter,
-  ) {
+  constructor(eventEmitter?: EventEmitter) {
     this.eventEmitter = eventEmitter;
-    this.transferQueue = transferQueue;
+    this.transferQueue = TransferQueue.getInstance(undefined, undefined, eventEmitter);
   }
 
   /**
    * Process a unified download request
    */
-  async processDownload(
-    request: UnifiedDownloadRequest,
-  ): Promise<UnifiedDownloadResponse> {
+  async processDownload(request: UnifiedDownloadRequest): Promise<UnifiedDownloadResponse> {
     const startTime = Date.now();
-
-    logger.info("Processing unified download request", {
+    
+    logger.info('Processing unified download request', {
       source: request.source,
       scope: request.scope,
       targetCount: request.targets.length,
-      options: request.options,
+      options: request.options
     });
 
     try {
@@ -159,10 +142,10 @@ class UnifiedDownloadService {
             skippedCount: 0,
             upgradedCount: 0,
             totalSize: 0,
-            message: "No valid targets found for download",
+            message: 'No valid targets found for download'
           },
-          warnings: ["No valid targets found"],
-          timestamp: new Date().toISOString(),
+          warnings: ['No valid targets found'],
+          timestamp: new Date().toISOString()
         };
       }
 
@@ -171,11 +154,12 @@ class UnifiedDownloadService {
 
       // Generate unified response
       return this.generateResponse(results, startTime);
+
     } catch (error) {
-      logger.error("Failed to process unified download request", {
+      logger.error('Failed to process unified download request', {
         source: request.source,
         scope: request.scope,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: error instanceof Error ? error.message : 'Unknown error'
       });
 
       return {
@@ -186,10 +170,10 @@ class UnifiedDownloadService {
           skippedCount: 0,
           upgradedCount: 0,
           totalSize: 0,
-          message: "Failed to process download request",
+          message: 'Failed to process download request'
         },
-        errors: [error instanceof Error ? error.message : "Unknown error"],
-        timestamp: new Date().toISOString(),
+        errors: [error instanceof Error ? error.message : 'Unknown error'],
+        timestamp: new Date().toISOString()
       };
     }
   }
@@ -199,31 +183,29 @@ class UnifiedDownloadService {
    */
   private validateRequest(request: UnifiedDownloadRequest): void {
     if (!request.targets || request.targets.length === 0) {
-      throw new Error("At least one target must be specified");
+      throw new Error('At least one target must be specified');
     }
 
     // Validate target format based on scope
     for (const target of request.targets) {
-      if (!target || typeof target !== "string") {
-        throw new Error("Invalid target format");
+      if (!target || typeof target !== 'string') {
+        throw new Error('Invalid target format');
       }
 
       switch (request.scope) {
-        case "single":
-          if (!isValidObjectId(target) && !target.includes("-")) {
-            throw new Error(
-              "Single scope requires valid fileId or composite ID",
-            );
+        case 'single':
+          if (!isValidObjectId(target) && !target.includes('-')) {
+            throw new Error('Single scope requires valid fileId or composite ID');
           }
           break;
-        case "job":
+        case 'job':
           if (!isValidObjectId(target)) {
-            throw new Error("Job scope requires valid jobId");
+            throw new Error('Job scope requires valid jobId');
           }
           break;
-        case "directory":
-        case "pattern":
-        case "bulk":
+        case 'directory':
+        case 'pattern':
+        case 'bulk':
           // More flexible validation for these scopes
           break;
       }
@@ -231,15 +213,12 @@ class UnifiedDownloadService {
 
     // Validate options
     if (request.options.jobId && !isValidObjectId(request.options.jobId)) {
-      throw new Error("Invalid jobId format in options");
+      throw new Error('Invalid jobId format in options');
     }
 
-    if (
-      request.options.localPath &&
-      path.isAbsolute(request.options.localPath) === false
-    ) {
-      logger.warn("Local path is not absolute, may cause issues", {
-        localPath: request.options.localPath,
+    if (request.options.localPath && path.isAbsolute(request.options.localPath) === false) {
+      logger.warn('Local path is not absolute, may cause issues', {
+        localPath: request.options.localPath
       });
     }
   }
@@ -247,85 +226,50 @@ class UnifiedDownloadService {
   /**
    * Process targets based on scope and resolve to file states
    */
-  private async processTargets(
-    request: UnifiedDownloadRequest,
-  ): Promise<ProcessedTarget[]> {
+  private async processTargets(request: UnifiedDownloadRequest): Promise<ProcessedTarget[]> {
     await connectDB();
-    const { SyncJob, FileState } = await import("@/models");
+    const { SyncJob, FileState } = await import('@/models');
 
     const processedTargets: ProcessedTarget[] = [];
 
     for (const target of request.targets) {
       try {
         switch (request.scope) {
-          case "single":
-            const singleTarget = await this.processSingleTarget(
-              target,
-              request.options,
-              SyncJob,
-              FileState,
-            );
+          case 'single':
+            const singleTarget = await this.processSingleTarget(target, request.options, SyncJob, FileState);
             if (singleTarget) processedTargets.push(singleTarget);
             break;
 
-          case "job":
-            const jobTargets = await this.processJobTarget(
-              target,
-              request.options,
-              SyncJob,
-              FileState,
-            );
+          case 'job':
+            const jobTargets = await this.processJobTarget(target, request.options, SyncJob, FileState);
             processedTargets.push(...jobTargets);
             break;
 
-          case "directory":
-            const dirTargets = await this.processDirectoryTarget(
-              target,
-              request.options,
-              SyncJob,
-              FileState,
-            );
+          case 'directory':
+            const dirTargets = await this.processDirectoryTarget(target, request.options, SyncJob, FileState);
             processedTargets.push(...dirTargets);
             break;
 
-          case "bulk":
-            const bulkTargets = await this.processBulkTarget(
-              target,
-              request.options,
-              SyncJob,
-              FileState,
-            );
+          case 'bulk':
+            const bulkTargets = await this.processBulkTarget(target, request.options, SyncJob, FileState);
             processedTargets.push(...bulkTargets);
             break;
 
-          case "pattern":
-            const patternTargets = await this.processPatternTarget(
-              target,
-              request.options,
-              SyncJob,
-              FileState,
-            );
+          case 'pattern':
+            const patternTargets = await this.processPatternTarget(target, request.options, SyncJob, FileState);
             processedTargets.push(...patternTargets);
             break;
 
           default:
-            logger.warn("Unknown scope, treating as single", {
-              scope: request.scope,
-              target,
-            });
-            const fallbackTarget = await this.processSingleTarget(
-              target,
-              request.options,
-              SyncJob,
-              FileState,
-            );
+            logger.warn('Unknown scope, treating as single', { scope: request.scope, target });
+            const fallbackTarget = await this.processSingleTarget(target, request.options, SyncJob, FileState);
             if (fallbackTarget) processedTargets.push(fallbackTarget);
         }
       } catch (error) {
-        logger.error("Failed to process target", {
+        logger.error('Failed to process target', {
           target,
           scope: request.scope,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: error instanceof Error ? error.message : 'Unknown error'
         });
       }
     }
@@ -338,9 +282,9 @@ class UnifiedDownloadService {
    */
   private async processSingleTarget(
     target: string,
-    options: UnifiedDownloadRequest["options"],
+    options: UnifiedDownloadRequest['options'],
     SyncJob: any,
-    FileState: any,
+    FileState: any
   ): Promise<ProcessedTarget | null> {
     // Parse composite ID if present
     const parsedId = parseCompositeId(target);
@@ -348,7 +292,7 @@ class UnifiedDownloadService {
     const jobId = parsedId.isComposite ? parsedId.jobId : options.jobId;
 
     if (!jobId) {
-      throw new Error("Job ID must be provided either in target or options");
+      throw new Error('Job ID must be provided either in target or options');
     }
 
     const fileState = await FileState.findById(fileId);
@@ -356,20 +300,14 @@ class UnifiedDownloadService {
       throw new Error(`File not found: ${fileId}`);
     }
 
-    const syncJob = await SyncJob.findById(jobId).populate("serverProfileId");
+    const syncJob = await SyncJob.findById(jobId).populate('serverProfileId');
     if (!syncJob) {
       throw new Error(`Job not found: ${jobId}`);
     }
 
     const serverProfile = await this.getServerProfile(syncJob);
-    const {
-      source,
-      destination,
-      transferType,
-      size,
-      isDirectoryPackage,
-      childFileStates,
-    } = await this.buildTransferPaths(fileState, syncJob, options);
+    const { source, destination, transferType, size, isDirectoryPackage, childFileStates } = 
+      await this.buildTransferPaths(fileState, syncJob, options);
 
     return {
       fileId,
@@ -382,7 +320,7 @@ class UnifiedDownloadService {
       transferType,
       size,
       isDirectoryPackage,
-      childFileStates,
+      childFileStates
     };
   }
 
@@ -391,25 +329,25 @@ class UnifiedDownloadService {
    */
   private async processJobTarget(
     jobId: string,
-    options: UnifiedDownloadRequest["options"],
+    options: UnifiedDownloadRequest['options'],
     SyncJob: any,
-    FileState: any,
+    FileState: any
   ): Promise<ProcessedTarget[]> {
-    const syncJob = await SyncJob.findById(jobId).populate("serverProfileId");
+    const syncJob = await SyncJob.findById(jobId).populate('serverProfileId');
     if (!syncJob) {
       throw new Error(`Job not found: ${jobId}`);
     }
 
     const remoteOnlyFiles = await FileState.find({
       jobId,
-      syncState: "remote_only",
+      syncState: 'remote_only'
     });
 
     const serverProfile = await this.getServerProfile(syncJob);
     const processedTargets: ProcessedTarget[] = [];
 
     for (const fileState of remoteOnlyFiles) {
-      const { source, destination, transferType, size } =
+      const { source, destination, transferType, size } = 
         await this.buildTransferPaths(fileState, syncJob, options);
 
       processedTargets.push({
@@ -421,7 +359,7 @@ class UnifiedDownloadService {
         source,
         destination,
         transferType,
-        size,
+        size
       });
     }
 
@@ -433,9 +371,9 @@ class UnifiedDownloadService {
    */
   private async processDirectoryTarget(
     target: string,
-    options: UnifiedDownloadRequest["options"],
+    options: UnifiedDownloadRequest['options'],
     SyncJob: any,
-    FileState: any,
+    FileState: any
   ): Promise<ProcessedTarget[]> {
     // Implementation for directory processing
     // This would handle directory-specific logic
@@ -447,28 +385,20 @@ class UnifiedDownloadService {
    */
   private async processBulkTarget(
     target: string,
-    options: UnifiedDownloadRequest["options"],
+    options: UnifiedDownloadRequest['options'],
     SyncJob: any,
-    FileState: any,
+    FileState: any
   ): Promise<ProcessedTarget[]> {
     // Parse target as comma-separated file IDs
-    const fileIds = target
-      .split(",")
-      .map((id) => id.trim())
-      .filter(Boolean);
+    const fileIds = target.split(',').map(id => id.trim()).filter(Boolean);
     const processedTargets: ProcessedTarget[] = [];
 
     for (const fileId of fileIds) {
       try {
-        const singleTarget = await this.processSingleTarget(
-          fileId,
-          options,
-          SyncJob,
-          FileState,
-        );
+        const singleTarget = await this.processSingleTarget(fileId, options, SyncJob, FileState);
         if (singleTarget) processedTargets.push(singleTarget);
       } catch (error) {
-        logger.warn("Failed to process bulk target item", { fileId, error });
+        logger.warn('Failed to process bulk target item', { fileId, error });
       }
     }
 
@@ -480,9 +410,9 @@ class UnifiedDownloadService {
    */
   private async processPatternTarget(
     pattern: string,
-    options: UnifiedDownloadRequest["options"],
+    options: UnifiedDownloadRequest['options'],
     SyncJob: any,
-    FileState: any,
+    FileState: any
   ): Promise<ProcessedTarget[]> {
     // Implementation for pattern matching
     // This would handle file pattern matching
@@ -503,13 +433,11 @@ class UnifiedDownloadService {
     }
 
     if (!serverProfile.address || !serverProfile.user) {
-      throw new Error("Invalid server configuration: missing address or user");
+      throw new Error('Invalid server configuration: missing address or user');
     }
 
     if (!serverProfile.privateKey && !serverProfile.password) {
-      throw new Error(
-        "Invalid server configuration: missing authentication method",
-      );
+      throw new Error('Invalid server configuration: missing authentication method');
     }
 
     return serverProfile;
@@ -521,7 +449,7 @@ class UnifiedDownloadService {
   private async buildTransferPaths(
     fileState: any,
     syncJob: any,
-    options: UnifiedDownloadRequest["options"],
+    options: UnifiedDownloadRequest['options']
   ): Promise<{
     source: string;
     destination: string;
@@ -531,7 +459,7 @@ class UnifiedDownloadService {
     childFileStates?: any[];
   }> {
     const sourcePath = path.join(syncJob.remotePath, fileState.relativePath);
-
+    
     let destination: string;
     if (options.localPath) {
       destination = options.localPath;
@@ -545,13 +473,9 @@ class UnifiedDownloadService {
     let totalSize = fileState.size || 0;
 
     if (fileState.isDirectory) {
-      const { FileState } = await import("@/models");
-      childFileStates = await this.findChildFileStates(
-        syncJob._id.toString(),
-        fileState.relativePath,
-        FileState,
-      );
-
+      const { FileState } = await import('@/models');
+      childFileStates = await this.findChildFileStates(syncJob._id.toString(), fileState.relativePath, FileState);
+      
       if (childFileStates.length > 0) {
         isDirectoryPackage = true;
         totalSize = childFileStates.reduce((sum, child) => {
@@ -573,7 +497,7 @@ class UnifiedDownloadService {
     // Adjust source path for directory packages
     let finalSource = sourcePath;
     if (isDirectoryPackage) {
-      finalSource = sourcePath.endsWith("/") ? sourcePath : sourcePath + "/";
+      finalSource = sourcePath.endsWith('/') ? sourcePath : sourcePath + '/';
     }
 
     return {
@@ -582,28 +506,21 @@ class UnifiedDownloadService {
       transferType,
       size: totalSize,
       isDirectoryPackage,
-      childFileStates,
+      childFileStates
     };
   }
 
   /**
    * Find child file states for directory packages
    */
-  private async findChildFileStates(
-    jobId: string,
-    parentRelativePath: string,
-    FileState: any,
-  ): Promise<any[]> {
-    const escapedPath = parentRelativePath.replace(
-      /[.*+?^${}()|[\]\\]/g,
-      "\\$&",
-    );
+  private async findChildFileStates(jobId: string, parentRelativePath: string, FileState: any): Promise<any[]> {
+    const escapedPath = parentRelativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return await FileState.find({
       jobId,
-      relativePath: {
+      relativePath: { 
         $regex: `^${escapedPath}/`,
-        $options: "i",
-      },
+        $options: 'i'
+      }
     }).lean();
   }
 
@@ -612,18 +529,14 @@ class UnifiedDownloadService {
    */
   private async queueTransfers(
     targets: ProcessedTarget[],
-    request: UnifiedDownloadRequest,
+    request: UnifiedDownloadRequest
   ): Promise<QueueResult[]> {
     const results: QueueResult[] = [];
 
     // Determine priority based on source
-    let priority: TransferPriority = request.options.priority
-      ? TransferPriority[
-          request.options.priority as keyof typeof TransferPriority
-        ]
-      : request.source === "manual"
-        ? TransferPriority.URGENT
-        : TransferPriority.NORMAL;
+    let priority: TransferPriority = request.options.priority 
+      ? TransferPriority[request.options.priority as keyof typeof TransferPriority]
+      : (request.source === 'manual' ? TransferPriority.URGENT : TransferPriority.NORMAL);
 
     for (const target of targets) {
       try {
@@ -632,9 +545,9 @@ class UnifiedDownloadService {
         try {
           await fs.mkdir(destinationDir, { recursive: true });
         } catch (error) {
-          logger.warn("Failed to create destination directory", {
-            destinationDir,
-            error: error instanceof Error ? error.message : "Unknown error",
+          logger.warn('Failed to create destination directory', { 
+            destinationDir, 
+            error: error instanceof Error ? error.message : 'Unknown error' 
           });
         }
 
@@ -653,7 +566,7 @@ class UnifiedDownloadService {
             host: target.serverProfile.address,
             port: target.serverProfile.port,
             username: target.serverProfile.user,
-            privateKey: target.serverProfile.privateKey || "",
+            privateKey: target.serverProfile.privateKey || ''
           },
           rsyncOptions: {
             verbose: true,
@@ -666,45 +579,33 @@ class UnifiedDownloadService {
             ...(target.isDirectoryPackage && {
               recursive: true,
               dirs: true,
-              mkpath: true,
+              mkpath: true
             }),
-            ...request.options.rsyncOptions,
+            ...request.options.rsyncOptions
           },
-          maxRetries: 3,
+          maxRetries: 3
         };
 
-        // Check concurrency and add transfer with database sync
-        const concurrencyCheck = await this.transferQueue.checkJobConcurrency(
-          target.jobId,
-        );
+        // Add transfer with duplicate checking
+        const result = await this.transferQueue.addTransferWithDuplicateCheck(transferData, request.source);
 
-        let transferId: string;
-        let wasQueued = false;
-        let concurrencySlot: number | undefined;
+        // Update file state
+        const updateData: any = {
+          syncState: 'queued',
+          'transfer.transferId': result.transferId,
+          'transfer.progress': 0,
+          'transfer.errorMessage': null,
+          'transfer.retryCount': 0,
+          'transfer.source': request.source
+        };
 
-        if (concurrencyCheck.hasAvailableSlots) {
-          // Can start immediately
-          transferId = await this.transferQueue.addTransferWithConcurrencyCheck(
-            transferData,
-            target.jobId,
-          );
-          concurrencySlot = concurrencyCheck.availableSlot;
-        } else {
-          // Add to queue
-          transferId = await this.transferQueue.addTransfer(transferData);
-          wasQueued = true;
+        if (request.source === 'manual') {
+          updateData['transfer.lastManualRequest'] = new Date();
+          updateData['transfer.manualPriority'] = true;
         }
 
-        // The database update is now handled by the DatabaseSyncedTransferQueue
-        // No need for manual FileState updates here as the queue handles it
-
-        const result = {
-          transferId,
-          isDuplicate: false,
-          upgraded: false,
-          wasQueued,
-          concurrencySlot,
-        };
+        const { FileState } = await import('@/models');
+        await FileState.findByIdAndUpdate(target.fileId, updateData);
 
         results.push({
           transferId: result.transferId,
@@ -713,33 +614,34 @@ class UnifiedDownloadService {
           size: target.size,
           isDuplicate: result.isDuplicate,
           upgraded: result.upgraded,
-          skipped: false,
+          skipped: false
         });
 
-        logger.info("Transfer queued successfully", {
+        logger.info('Transfer queued successfully', {
           transferId: result.transferId,
           fileId: target.fileId,
           filename: target.fileState.filename,
           source: request.source,
           isDuplicate: result.isDuplicate,
-          upgraded: result.upgraded,
+          upgraded: result.upgraded
         });
+
       } catch (error) {
-        logger.error("Failed to queue transfer", {
+        logger.error('Failed to queue transfer', {
           fileId: target.fileId,
           filename: target.fileState.filename,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: error instanceof Error ? error.message : 'Unknown error'
         });
 
         results.push({
-          transferId: "",
+          transferId: '',
           fileId: target.fileId,
           filename: target.fileState.filename,
           size: target.size,
           isDuplicate: false,
           upgraded: false,
           skipped: true,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: error instanceof Error ? error.message : 'Unknown error'
         });
       }
     }
@@ -750,18 +652,11 @@ class UnifiedDownloadService {
   /**
    * Generate unified response
    */
-  private generateResponse(
-    results: QueueResult[],
-    startTime: number,
-  ): UnifiedDownloadResponse {
-    const transferIds = results
-      .filter((r) => !r.skipped)
-      .map((r) => r.transferId);
-    const queuedCount = results.filter(
-      (r) => !r.skipped && !r.isDuplicate,
-    ).length;
-    const skippedCount = results.filter((r) => r.skipped).length;
-    const upgradedCount = results.filter((r) => r.upgraded).length;
+  private generateResponse(results: QueueResult[], startTime: number): UnifiedDownloadResponse {
+    const transferIds = results.filter(r => !r.skipped).map(r => r.transferId);
+    const queuedCount = results.filter(r => !r.skipped && !r.isDuplicate).length;
+    const skippedCount = results.filter(r => r.skipped).length;
+    const upgradedCount = results.filter(r => r.upgraded).length;
     const totalSize = results.reduce((sum, r) => sum + r.size, 0);
     const duration = Date.now() - startTime;
 
@@ -769,7 +664,7 @@ class UnifiedDownloadService {
     const errors: string[] = [];
 
     // Collect warnings and errors
-    results.forEach((result) => {
+    results.forEach(result => {
       if (result.error) {
         errors.push(`${result.filename}: ${result.error}`);
       }
@@ -791,13 +686,12 @@ class UnifiedDownloadService {
         skippedCount,
         upgradedCount,
         totalSize,
-        estimatedDuration:
-          totalSize > 0 ? Math.ceil(totalSize / (10 * 1024 * 1024)) : undefined, // Rough estimate
-        message,
+        estimatedDuration: totalSize > 0 ? Math.ceil(totalSize / (10 * 1024 * 1024)) : undefined, // Rough estimate
+        message
       },
       warnings: warnings.length > 0 ? warnings : undefined,
       errors: errors.length > 0 ? errors : undefined,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     };
   }
 }
@@ -805,27 +699,9 @@ class UnifiedDownloadService {
 // Export singleton instance
 let downloadServiceInstance: UnifiedDownloadService | null = null;
 
-export function getDownloadService(
-  eventEmitter?: EventEmitter,
-): UnifiedDownloadService {
+export function getDownloadService(eventEmitter?: EventEmitter): UnifiedDownloadService {
   if (!downloadServiceInstance) {
-    const transferQueue = new DatabaseSyncedTransferQueue(
-      DEFAULT_QUEUE_CONFIG,
-      DEFAULT_RETRY_POLICY,
-      eventEmitter,
-    );
-
-    // Initialize from database
-    transferQueue.initializeFromDatabase().catch((error) => {
-      logger.error("Failed to initialize transfer queue from database", {
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-    });
-
-    downloadServiceInstance = new UnifiedDownloadService(
-      transferQueue,
-      eventEmitter,
-    );
+    downloadServiceInstance = new UnifiedDownloadService(eventEmitter);
   }
   return downloadServiceInstance;
 }

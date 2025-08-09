@@ -18,12 +18,11 @@ import {
   Upload,
   AlertCircle,
 } from "lucide-react";
-import {
-  useJobEvents,
-  JobProgressData,
-} from "@/components/providers/websocket-provider";
 import { TreeNodeProps } from "@/types/tree";
-import { useWebSocket } from "@/components/providers/websocket-provider";
+import {
+  useWebSocket,
+  useJobEvents,
+} from "@/components/providers/websocket-provider";
 import { parseCompositeId } from "@/lib/utils";
 import { isValidObjectId } from "@/lib/utils/validation";
 import { toast } from "sonner";
@@ -51,37 +50,6 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   const [transferId, setTransferId] = useState<string | null>(null);
   const { socket, subscribe, unsubscribe } = useWebSocket();
 
-  // ✅ Initial state recovery on component mount
-  useEffect(() => {
-    // On mount, check if this file has an active transfer
-    if (node.transferState?.isActive) {
-      setIsDownloading(true);
-      setTransferId(node.transferState.transferId || null);
-
-      // Set initial progress if available
-      if (node.transferState.progress !== undefined) {
-        setDownloadProgress(node.transferState.progress);
-      }
-
-      // Set transfer stats if available
-      if (node.transferState.speed || node.transferState.eta) {
-        setTransferStats({
-          speed: node.transferState.speed,
-          eta: node.transferState.eta,
-          bytesTransferred: undefined,
-          totalBytes: undefined,
-        });
-      }
-
-      // Request current progress if available
-      if (socket && node.transferState.transferId) {
-        socket.emit("request:transfer-progress", {
-          transferId: node.transferState.transferId,
-        });
-      }
-    }
-  }, [node.transferState, socket]);
-
   // ✅ Use job events hook for real-time updates
   useJobEvents({
     onProgress: (data: any) => {
@@ -94,8 +62,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
         data.transferId === transferId
       ) {
         // Handle both 'progress' and 'percentage' fields for compatibility
-        const progressValue =
-          data.progress !== undefined ? data.progress : data.percentage;
+        const progressValue = data.progress !== undefined ? data.progress : data.percentage;
         console.log("Progress update for current file:", progressValue);
         setDownloadProgress(progressValue || 0);
 
@@ -169,10 +136,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
           (progressData.transferId === transferId && transferId !== null)
         ) {
           // Handle both 'progress' and 'percentage' fields for compatibility
-          const progressValue =
-            progressData.progress !== undefined
-              ? progressData.progress
-              : progressData.percentage;
+          const progressValue = progressData.progress !== undefined ? progressData.progress : progressData.percentage;
           console.log(
             "Unified progress update for file:",
             node.id,
@@ -290,14 +254,8 @@ const TreeNode: React.FC<TreeNodeProps> = ({
         // If this is an active download for this file, update progress
         if (isDownloading && transferId) {
           // Handle both 'progress' and 'percentage' fields
-          const progressValue =
-            rsyncData.progress !== undefined
-              ? rsyncData.progress
-              : rsyncData.percentage;
-          console.log(
-            "Rsync progress update for active download:",
-            progressValue,
-          );
+          const progressValue = rsyncData.progress !== undefined ? rsyncData.progress : rsyncData.percentage;
+          console.log("Rsync progress update for active download:", progressValue);
           setDownloadProgress(progressValue || 0);
 
           // Update transfer stats
@@ -362,27 +320,6 @@ const TreeNode: React.FC<TreeNodeProps> = ({
     };
   }, [socket, node.id, node.name, transferId, subscribe, unsubscribe]);
 
-  // ✅ Handle transfer progress response
-  useEffect(() => {
-    if (socket) {
-      const handleProgressResponse = (data: any) => {
-        if (data.transferId === transferId) {
-          setDownloadProgress(data.progress || 0);
-          setTransferStats({
-            speed: data.speed,
-            eta: data.eta,
-            bytesTransferred: data.bytesTransferred,
-            totalBytes: data.totalBytes,
-          });
-        }
-      };
-
-      socket.on("transfer-progress:response", handleProgressResponse);
-      return () =>
-        socket.off("transfer-progress:response", handleProgressResponse);
-    }
-  }, [socket, transferId]);
-
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return "0 B";
     const k = 1024;
@@ -391,26 +328,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
   };
 
-  const getStatusBadge = (syncState: string, transferState?: any) => {
-    // If transfer is active, show transferring state regardless of syncState
-    if (transferState?.isActive) {
-      if (syncState === "queued") {
-        return (
-          <Badge variant="secondary" className="flex items-center gap-1">
-            <div className="animate-pulse h-2 w-2 bg-yellow-500 rounded-full" />
-            Queued
-          </Badge>
-        );
-      } else if (syncState === "transferring") {
-        return (
-          <Badge variant="default" className="flex items-center gap-1">
-            <div className="animate-pulse h-2 w-2 bg-blue-500 rounded-full" />
-            Transferring
-          </Badge>
-        );
-      }
-    }
-
+  const getStatusBadge = (syncState: string) => {
     const variants: Record<
       string,
       {
@@ -556,7 +474,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
           body: JSON.stringify({
             fileId: node.id, // Send the original node.id (may be composite)
             jobId: actualJobId, // Send the parsed/actual jobId
-            priority: "URGENT", // Use URGENT for manual downloads
+            priority: "HIGH",
           }),
           signal: controller.signal,
         });
@@ -777,21 +695,15 @@ const TreeNode: React.FC<TreeNodeProps> = ({
 
         {/* Sync State Badge with inline progress */}
         <div className="shrink-0 flex items-center gap-2">
-          {getStatusBadge(node.syncState, node.transferState)}
+          {getStatusBadge(node.syncState)}
           {isDownloading && downloadProgress !== null && (
             <div className="flex items-center gap-2 text-xs">
-              <span className="font-medium text-blue-600">
-                {Math.round(downloadProgress)}%
-              </span>
+              <span className="font-medium text-blue-600">{Math.round(downloadProgress)}%</span>
               {transferStats?.speed && (
-                <span className="font-medium text-green-600">
-                  {transferStats.speed}
-                </span>
+                <span className="font-medium text-green-600">{transferStats.speed}</span>
               )}
               {transferStats?.eta && (
-                <span className="font-medium text-orange-600">
-                  {transferStats.eta}
-                </span>
+                <span className="font-medium text-orange-600">{transferStats.eta}</span>
               )}
             </div>
           )}

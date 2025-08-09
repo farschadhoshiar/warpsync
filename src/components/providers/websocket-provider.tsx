@@ -7,23 +7,10 @@ import {
   useState,
   ReactNode,
   useCallback,
-  useRef,
 } from "react";
 import { io, Socket } from "socket.io-client";
 import { toast } from "sonner";
 import { isValidJobId, isValidServerId } from "@/lib/utils/validation";
-import {
-  JobEventHandlers,
-  ServerEventHandlers,
-  ClientCallback,
-  JobProgressData,
-  JobStatusData,
-  JobErrorData,
-  JobCompleteData,
-  ServerStatusData,
-  ServerMetricsData,
-  ServerAlertData,
-} from "@/lib/websocket/types";
 
 interface WebSocketContextType {
   socket: Socket | null;
@@ -32,8 +19,8 @@ interface WebSocketContextType {
   currentRooms: Set<string>;
   reconnectCount: number;
   // Event handlers
-  subscribe: (event: string, handler: ClientCallback) => void;
-  unsubscribe: (event: string, handler: ClientCallback) => void;
+  subscribe: (event: string, handler: (data: unknown) => void) => void;
+  unsubscribe: (event: string, handler: (data: unknown) => void) => void;
   emit: (event: string, data?: unknown) => void;
   // Connection management
   reconnect: () => void;
@@ -245,10 +232,8 @@ export function WebSocketProvider({
   }, [jobId, serverId, autoConnect]);
 
   // ✅ Event subscription helpers
-  const subscribe = useCallback<
-    (event: string, handler: ClientCallback) => void
-  >(
-    (event: string, handler: ClientCallback) => {
+  const subscribe = useCallback(
+    (event: string, handler: (data: unknown) => void) => {
       if (!socket) {
         console.warn("Cannot subscribe to event: socket not connected", {
           event,
@@ -260,10 +245,8 @@ export function WebSocketProvider({
     [socket],
   );
 
-  const unsubscribe = useCallback<
-    (event: string, handler: ClientCallback) => void
-  >(
-    (event: string, handler: ClientCallback) => {
+  const unsubscribe = useCallback(
+    (event: string, handler: (data: unknown) => void) => {
       if (!socket) {
         console.warn("Cannot unsubscribe from event: socket not connected", {
           event,
@@ -275,7 +258,7 @@ export function WebSocketProvider({
     [socket],
   );
 
-  const emit = useCallback<(event: string, data?: unknown) => void>(
+  const emit = useCallback(
     (event: string, data?: unknown) => {
       if (!socket || !isConnected) {
         console.warn("Cannot emit event: socket not connected", {
@@ -290,13 +273,13 @@ export function WebSocketProvider({
   );
 
   // ✅ Connection management
-  const reconnect = useCallback<() => void>(() => {
+  const reconnect = useCallback(() => {
     if (socket && !isConnected) {
       socket.connect();
     }
   }, [socket, isConnected]);
 
-  const disconnect = useCallback<() => void>(() => {
+  const disconnect = useCallback(() => {
     if (socket && isConnected) {
       socket.disconnect();
     }
@@ -323,34 +306,9 @@ export function WebSocketProvider({
 }
 
 /**
- * Helper function for event handler registration and cleanup
- * @param subscribe Function to subscribe to events
- * @param unsubscribe Function to unsubscribe from events
- * @param eventHandlers Array of event handler tuples
- * @returns Cleanup function
- */
-function registerEventHandlers(
-  subscribe: (event: string, handler: ClientCallback) => void,
-  unsubscribe: (event: string, handler: ClientCallback) => void,
-  eventHandlers: Array<[string, ClientCallback]>,
-): () => void {
-  // Subscribe to all events
-  eventHandlers.forEach(([event, handler]) => {
-    subscribe(event, handler);
-  });
-
-  // Return cleanup function
-  return () => {
-    eventHandlers.forEach(([event, handler]) => {
-      unsubscribe(event, handler);
-    });
-  };
-}
-
-/**
  * ✅ Hook for accessing WebSocket context
  */
-export function useWebSocket(): WebSocketContextType {
+export function useWebSocket() {
   const context = useContext(WebSocketContext);
   if (context === undefined) {
     throw new Error("useWebSocket must be used within a WebSocketProvider");
@@ -360,71 +318,31 @@ export function useWebSocket(): WebSocketContextType {
 
 /**
  * ✅ Hook for job-specific events (simplified)
- *
- * @param handlers Object containing client-side Socket.IO event callbacks
- * @param handlers.onProgress Client-side callback for job progress updates - NOT a Server Action
- * @param handlers.onStatusChange Client-side callback for job status changes - NOT a Server Action
- * @param handlers.onError Client-side callback for job errors - NOT a Server Action
- * @param handlers.onComplete Client-side callback for job completion - NOT a Server Action
- *
- * @client-side All callbacks execute in the browser, not on the server
  */
-export function useJobEvents(handlers: JobEventHandlers): void {
+export function useJobEvents(handlers: {
+  onProgress?: (data: any) => void;
+  onStatusChange?: (data: any) => void;
+  onError?: (data: any) => void;
+  onComplete?: (data: any) => void;
+}) {
   const { subscribe, unsubscribe, isConnected } = useWebSocket();
-
-  // Use refs to store stable callback references
-  const handlersRef = useRef<JobEventHandlers>(handlers);
-
-  // Update ref when handlers change
-  useEffect(() => {
-    handlersRef.current = handlers;
-  }, [handlers]);
-
-  // Create stable callback wrappers
-  const stableProgressCallback = useCallback<ClientCallback<JobProgressData>>(
-    (data) => {
-      handlersRef.current.onProgress?.(data);
-    },
-    [],
-  );
-
-  const stableStatusCallback = useCallback<ClientCallback<JobStatusData>>(
-    (data) => {
-      handlersRef.current.onStatusChange?.(data);
-    },
-    [],
-  );
-
-  const stableErrorCallback = useCallback<ClientCallback<JobErrorData>>(
-    (data) => {
-      handlersRef.current.onError?.(data);
-    },
-    [],
-  );
-
-  const stableCompleteCallback = useCallback<ClientCallback<JobCompleteData>>(
-    (data) => {
-      handlersRef.current.onComplete?.(data);
-    },
-    [],
-  );
 
   useEffect(() => {
     if (!isConnected) return;
 
-    const eventHandlers: Array<[string, ClientCallback]> = [];
+    const eventHandlers: Array<[string, (data: any) => void]> = [];
 
     if (handlers.onProgress) {
-      eventHandlers.push(["job:progress", stableProgressCallback]);
+      eventHandlers.push(["job:progress", handlers.onProgress]);
     }
     if (handlers.onStatusChange) {
-      eventHandlers.push(["job:status", stableStatusCallback]);
+      eventHandlers.push(["job:status", handlers.onStatusChange]);
     }
     if (handlers.onError) {
-      eventHandlers.push(["job:error", stableErrorCallback]);
+      eventHandlers.push(["job:error", handlers.onError]);
     }
     if (handlers.onComplete) {
-      eventHandlers.push(["job:complete", stableCompleteCallback]);
+      eventHandlers.push(["job:complete", handlers.onComplete]);
     }
 
     // Subscribe to all events
@@ -438,77 +356,32 @@ export function useJobEvents(handlers: JobEventHandlers): void {
         unsubscribe(event, handler);
       });
     };
-  }, [
-    subscribe,
-    unsubscribe,
-    isConnected,
-    handlers.onProgress,
-    handlers.onStatusChange,
-    handlers.onError,
-    handlers.onComplete,
-    stableProgressCallback,
-    stableStatusCallback,
-    stableErrorCallback,
-    stableCompleteCallback,
-  ]);
+  }, [subscribe, unsubscribe, isConnected, handlers]);
 }
 
 /**
  * ✅ Hook for server-specific events (simplified)
- *
- * @param handlers Object containing client-side Socket.IO event callbacks
- * @param handlers.onStatusChange Client-side callback for server status changes - NOT a Server Action
- * @param handlers.onMetricsUpdate Client-side callback for server metrics updates - NOT a Server Action
- * @param handlers.onAlert Client-side callback for server alerts - NOT a Server Action
- *
- * @client-side All callbacks execute in the browser, not on the server
  */
-export function useServerEvents(handlers: ServerEventHandlers): void {
+export function useServerEvents(handlers: {
+  onStatusChange?: (data: any) => void;
+  onMetricsUpdate?: (data: any) => void;
+  onAlert?: (data: any) => void;
+}) {
   const { subscribe, unsubscribe, isConnected } = useWebSocket();
-
-  // Use refs to store stable callback references
-  const handlersRef = useRef<ServerEventHandlers>(handlers);
-
-  // Update ref when handlers change
-  useEffect(() => {
-    handlersRef.current = handlers;
-  }, [handlers]);
-
-  // Create stable callback wrappers
-  const stableStatusCallback = useCallback<ClientCallback<ServerStatusData>>(
-    (data) => {
-      handlersRef.current.onStatusChange?.(data);
-    },
-    [],
-  );
-
-  const stableMetricsCallback = useCallback<ClientCallback<ServerMetricsData>>(
-    (data) => {
-      handlersRef.current.onMetricsUpdate?.(data);
-    },
-    [],
-  );
-
-  const stableAlertCallback = useCallback<ClientCallback<ServerAlertData>>(
-    (data) => {
-      handlersRef.current.onAlert?.(data);
-    },
-    [],
-  );
 
   useEffect(() => {
     if (!isConnected) return;
 
-    const eventHandlers: Array<[string, ClientCallback]> = [];
+    const eventHandlers: Array<[string, (data: any) => void]> = [];
 
     if (handlers.onStatusChange) {
-      eventHandlers.push(["server:status", stableStatusCallback]);
+      eventHandlers.push(["server:status", handlers.onStatusChange]);
     }
     if (handlers.onMetricsUpdate) {
-      eventHandlers.push(["server:metrics", stableMetricsCallback]);
+      eventHandlers.push(["server:metrics", handlers.onMetricsUpdate]);
     }
     if (handlers.onAlert) {
-      eventHandlers.push(["server:alert", stableAlertCallback]);
+      eventHandlers.push(["server:alert", handlers.onAlert]);
     }
 
     // Subscribe to all events
@@ -522,42 +395,5 @@ export function useServerEvents(handlers: ServerEventHandlers): void {
         unsubscribe(event, handler);
       });
     };
-  }, [
-    subscribe,
-    unsubscribe,
-    isConnected,
-    handlers.onStatusChange,
-    handlers.onMetricsUpdate,
-    handlers.onAlert,
-    stableStatusCallback,
-    stableMetricsCallback,
-    stableAlertCallback,
-  ]);
+  }, [subscribe, unsubscribe, isConnected, handlers]);
 }
-
-/**
- * Re-export types for consuming components
- */
-export type {
-  JobEventHandlers,
-  ServerEventHandlers,
-  ClientCallback,
-  JobProgressData,
-  JobStatusData,
-  JobErrorData,
-  JobCompleteData,
-  ServerStatusData,
-  ServerMetricsData,
-  ServerAlertData,
-  WebSocketContextType,
-} from "@/lib/websocket/types";
-
-export type {
-  JobProgressPayload,
-  JobStatusPayload,
-  JobErrorPayload,
-  JobCompletePayload,
-  ServerStatusPayload,
-  ServerMetricsPayload,
-  ServerAlertPayload,
-} from "@/lib/websocket/event-schemas";
