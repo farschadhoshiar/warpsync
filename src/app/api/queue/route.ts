@@ -114,12 +114,25 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
     
     // Add transfers to queue
     const transferIds = await transferQueue.addBatch(
-      transfers.map(transfer => ({
-        ...transfer,
-        type: transfer.type as TransferType,
-        priority: TransferPriority[transfer.priority as keyof typeof TransferPriority],
-        rsyncOptions: transfer.rsyncOptions as Record<string, string | number | boolean> | undefined
-      }))
+      transfers.map(transfer => {
+        // Only include sshConfig if privateKey is provided
+        const sshConfig = transfer.sshConfig && transfer.sshConfig.privateKey 
+          ? {
+              host: transfer.sshConfig.host,
+              port: transfer.sshConfig.port,
+              username: transfer.sshConfig.username,
+              privateKey: transfer.sshConfig.privateKey
+            }
+          : undefined;
+
+        return {
+          ...transfer,
+          type: transfer.type as TransferType,
+          priority: TransferPriority[transfer.priority as keyof typeof TransferPriority],
+          rsyncOptions: transfer.rsyncOptions as Record<string, string | number | boolean> | undefined,
+          sshConfig
+        };
+      })
     );
     
     logger.info('Transfers added to queue', {

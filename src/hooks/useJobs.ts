@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
 
-interface Job {
+export interface Job {
   _id: string;
   name: string;
   enabled: boolean;
@@ -48,7 +48,7 @@ interface Job {
   };
 }
 
-interface JobFormData {
+export interface JobFormData {
   name: string;
   enabled: boolean;
   serverProfileId: string;

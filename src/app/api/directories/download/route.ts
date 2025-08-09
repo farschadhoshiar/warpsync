@@ -1,6 +1,6 @@
 /**
- * File Download API Endpoint
- * Handles single file downloads with backward compatibility
+ * Directory Copy API Endpoint
+ * Handles directory-based download operations
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -11,34 +11,39 @@ import { EventEmitter } from '@/lib/websocket/emitter';
 import { withMiddleware } from '@/lib/auth/middleware';
 import { z } from 'zod';
 
-// Schema for single file download request
-const FileDownloadSchema = z.object({
-  fileId: z.string(),
+// Schema for directory download request
+const DirectoryDownloadSchema = z.object({
+  directoryPath: z.string(),
   jobId: z.string(),
   localPath: z.string().optional(),
-  priority: z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']).optional().default('URGENT')
+  priority: z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']).optional().default('HIGH'),
+  recursive: z.boolean().optional().default(true),
+  createStructure: z.boolean().optional().default(true),
+  preserveHierarchy: z.boolean().optional().default(true),
+  rsyncOptions: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional()
 });
 
 /**
- * POST /api/files/download
- * Download a single file from remote server
+ * POST /api/directories/download
+ * Download all files in a directory
  */
 export const POST = withMiddleware(
   withErrorHandler(async (req: NextRequest) => {
     const logger = await getRequestLogger();
-    const timer = new PerformanceTimer(logger, 'file_download');
+    const timer = new PerformanceTimer(logger, 'directory_download');
     
     try {
-      logger.info('Processing file download request');
+      logger.info('Processing directory download request');
       
       const body = await req.json();
-      const parsedRequest = FileDownloadSchema.parse(body);
+      const parsedRequest = DirectoryDownloadSchema.parse(body);
       
-      logger.info('File download request validated', {
-        fileId: parsedRequest.fileId,
+      logger.info('Directory download request validated', {
+        directoryPath: parsedRequest.directoryPath,
         jobId: parsedRequest.jobId,
         localPath: parsedRequest.localPath,
-        priority: parsedRequest.priority
+        priority: parsedRequest.priority,
+        recursive: parsedRequest.recursive
       });
 
       // Get download service with Socket.IO event emitter
@@ -48,15 +53,19 @@ export const POST = withMiddleware(
       // Convert to unified download request
       const unifiedRequest: UnifiedDownloadRequest = {
         source: 'manual',
-        scope: 'single',
-        targets: [parsedRequest.fileId],
+        scope: 'directory',
+        targets: [parsedRequest.directoryPath],
         options: {
           jobId: parsedRequest.jobId,
           priority: parsedRequest.priority,
           localPath: parsedRequest.localPath,
+          rsyncOptions: {
+            ...parsedRequest.rsyncOptions,
+            recursive: parsedRequest.recursive
+          },
           dryRun: false,
-          createStructure: true,
-          preserveHierarchy: true,
+          createStructure: parsedRequest.createStructure,
+          preserveHierarchy: parsedRequest.preserveHierarchy,
           overwriteExisting: false
         }
       };
@@ -65,8 +74,8 @@ export const POST = withMiddleware(
       const result = await downloadService.processDownload(unifiedRequest);
 
       if (!result.success) {
-        logger.error('File download request failed', {
-          fileId: parsedRequest.fileId,
+        logger.error('Directory download request failed', {
+          directoryPath: parsedRequest.directoryPath,
           errors: result.errors,
           warnings: result.warnings,
           duration: timer.end()
@@ -74,44 +83,32 @@ export const POST = withMiddleware(
 
         return NextResponse.json({
           success: false,
-          error: result.errors?.[0] || 'Download request failed',
+          error: result.errors?.[0] || 'Directory download request failed',
           errors: result.errors,
           warnings: result.warnings,
           timestamp: result.timestamp
         }, { status: 400 });
       }
 
-      // Transform to legacy format for backward compatibility
-      const transferId = result.data.transferIds[0];
-      const fileData = {
-        transferId,
-        fileId: parsedRequest.fileId,
-        filename: '', // Will be filled by the service
-        destination: parsedRequest.localPath || '',
-        message: 'Download queued successfully'
-      };
-
-      logger.info('File download request completed successfully', {
-        transferId,
-        fileId: parsedRequest.fileId,
-        queuedCount: result.data.queuedCount,
-        upgradedCount: result.data.upgradedCount,
-        duration: timer.end()
-      });
-
-      return createSuccessResponse({
-        ...fileData,
+      logger.info('Directory download request completed successfully', {
+        directoryPath: parsedRequest.directoryPath,
         queuedCount: result.data.queuedCount,
         skippedCount: result.data.skippedCount,
         upgradedCount: result.data.upgradedCount,
         totalSize: result.data.totalSize,
+        duration: timer.end()
+      });
+
+      return createSuccessResponse({
+        directoryPath: parsedRequest.directoryPath,
+        ...result.data,
         warnings: result.warnings
       });
 
     } catch (error) {
       timer.endWithError(error);
       
-      logger.error('File download request error', {
+      logger.error('Directory download request error', {
         error: error instanceof Error ? error.message : 'Unknown error'
       });
       
@@ -120,13 +117,13 @@ export const POST = withMiddleware(
   }),
   {
     auth: 'optional',
-    rateLimit: { limit: 100, windowMs: 15 * 60 * 1000 }, // 100 requests per 15 minutes
+    rateLimit: { limit: 30, windowMs: 15 * 60 * 1000 }, // 30 requests per 15 minutes
     validateSize: 1024 * 1024 // 1MB max request size
   }
 );
 
 /**
- * OPTIONS /api/files/download
+ * OPTIONS /api/directories/download
  * Handle preflight requests
  */
 export async function OPTIONS() {

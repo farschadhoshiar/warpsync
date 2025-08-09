@@ -22,41 +22,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
-import { useJobs } from '@/hooks/useJobs';
-
-// Job interface matching the one from useJobs hook
-interface Job {
-  _id: string;
-  name: string;
-  enabled: boolean;
-  serverProfileId: string;
-  remotePath: string;
-  localPath: string;
-  chmod: string;
-  scanInterval: number;
-  autoQueue: {
-    enabled: boolean;
-    patterns: string[];
-    excludePatterns: string[];
-  };
-  delugeAction: {
-    action: 'none' | 'remove' | 'removeData' | 'setLabel';
-    delayMinutes: number;
-    label?: string;
-  };
-  parallelism: {
-    maxTransfers: number;
-    maxConnections: number;
-  };
-  lastScan?: string;
-  createdAt: string;
-  updatedAt: string;
-  serverProfile?: {
-    name: string;
-    address: string;
-    port: number;
-  };
-}
+import { useJobs, type Job } from '@/hooks/useJobs';
 
 type StatusFilter = 'all' | 'active' | 'inactive';
 type SortBy = 'name' | 'created' | 'lastRun';

@@ -30,6 +30,10 @@ export interface IFileState extends Document {
     retryCount: number;
     startedAt?: Date;
     completedAt?: Date;
+    transferId?: string;
+    lastManualRequest?: Date;
+    manualPriority?: boolean;
+    source?: 'manual' | 'automatic' | 'scheduled';
   };
   directorySize?: number;
   fileCount?: number;
@@ -146,6 +150,24 @@ const transferMetadataSchema = new Schema({
   },
   completedAt: {
     type: Date
+  },
+  transferId: {
+    type: String,
+    maxlength: [100, 'Transfer ID cannot exceed 100 characters']
+  },
+  lastManualRequest: {
+    type: Date
+  },
+  manualPriority: {
+    type: Boolean,
+    default: false
+  },
+  source: {
+    type: String,
+    enum: {
+      values: ['manual', 'automatic', 'scheduled'],
+      message: 'Transfer source must be one of: manual, automatic, scheduled'
+    }
   }
 }, { _id: false });
 
@@ -342,6 +364,48 @@ fileStateSchema.methods.startTransfer = function(this: IFileState): void {
   this.transfer.startedAt = new Date();
   this.transfer.completedAt = undefined;
   this.transfer.errorMessage = undefined;
+};
+
+// Instance method: Update transfer progress dynamically
+fileStateSchema.methods.updateTransferProgress = function(
+  this: IFileState, 
+  progress: number, 
+  speed?: string, 
+  eta?: string
+): void {
+  if (this.syncState !== 'transferring') {
+    throw new Error('Can only update progress for transferring files');
+  }
+  
+  this.transfer.progress = Math.min(Math.max(progress, 0), 100);
+  if (speed) this.transfer.speed = speed;
+  if (eta) this.transfer.eta = eta;
+};
+
+// Instance method: Update transfer status dynamically
+fileStateSchema.methods.updateTransferStatus = function(
+  this: IFileState,
+  newStatus: 'queued' | 'transferring' | 'synced' | 'failed',
+  metadata?: Record<string, any>
+): void {
+  const oldStatus = this.syncState;
+  this.syncState = newStatus;
+  
+  // Update transfer metadata if provided
+  if (metadata) {
+    if (metadata.progress !== undefined) {
+      this.transfer.progress = metadata.progress;
+    }
+    if (metadata.speed !== undefined) {
+      this.transfer.speed = metadata.speed;
+    }
+    if (metadata.eta !== undefined) {
+      this.transfer.eta = metadata.eta;
+    }
+    if (metadata.error !== undefined) {
+      this.transfer.errorMessage = metadata.error;
+    }
+  }
 };
 
 // Instance method: Complete transfer

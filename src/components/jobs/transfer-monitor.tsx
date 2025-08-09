@@ -13,6 +13,15 @@ import {
   SelectTrigger, 
   SelectValue 
 } from '@/components/ui/select';
+import { 
+  Play as PlayIcon, 
+  Pause as PauseIcon, 
+  Clock as ClockIcon, 
+  CheckCircle as CheckCircleIcon, 
+  AlertTriangle as ExclamationTriangleIcon, 
+  X as XMarkIcon,
+  Square as StopIcon 
+} from 'lucide-react';
 
 interface Transfer {
   id: string;

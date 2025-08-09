@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { MainLayout } from "@/components/layout/main-layout";
-import { WebSocketProvider } from "@/components/providers/websocket-provider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,7 +15,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "WarpSync - File Synchronization",
-  description: "High-performance file synchronization between local and remote servers",
+  description:
+    "High-performance file synchronization between local and remote servers",
 };
 
 export default function RootLayout({
@@ -29,11 +29,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <WebSocketProvider>
-          <MainLayout>
-            {children}
-          </MainLayout>
-        </WebSocketProvider>
+        <MainLayout>{children}</MainLayout>
       </body>
     </html>
   );

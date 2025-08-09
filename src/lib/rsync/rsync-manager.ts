@@ -4,6 +4,7 @@ import { EventEmitter } from "../websocket/emitter";
 import { RsyncCommandBuilder } from "./command-builder";
 import { RsyncProgressParser } from "./progress-parser";
 import { SSHKeyManager } from "../ssh/key-manager";
+import { SystemValidator } from "./system-validator";
 import {
   RsyncConfig,
   RsyncProcess,
@@ -50,6 +51,49 @@ export class RsyncManager {
       throw new Error(
         `Invalid rsync configuration: ${validation.errors.join(", ")}`,
       );
+    }
+
+    // Pre-flight system validation
+    const systemValidation = await SystemValidator.validateSystem(
+      config.source,
+      config.destination,
+      config.sshConfig?.host,
+      {
+        checkRsync: true,
+        checkSSH: !!config.sshConfig,
+        checkPaths: true,
+        checkNetwork: !!config.sshConfig?.host,
+        timeoutMs: 10000,
+      },
+    );
+
+    if (!systemValidation.valid) {
+      const errorMessage = `System validation failed: ${systemValidation.errors.join(", ")}`;
+
+      // Emit validation error via Socket.IO
+      this.eventEmitter?.emitError({
+        jobId,
+        type: "validation",
+        message: errorMessage,
+        details: {
+          validationErrors: systemValidation.errors,
+          validationWarnings: systemValidation.warnings,
+          rsyncVersion: systemValidation.rsyncVersion,
+          sshVersion: systemValidation.sshVersion,
+        },
+        timestamp: new Date().toISOString(),
+      });
+
+      throw new Error(errorMessage);
+    }
+
+    // Log validation warnings if any
+    if (systemValidation.warnings.length > 0) {
+      logger.warn("System validation completed with warnings", {
+        warnings: systemValidation.warnings,
+        rsyncVersion: systemValidation.rsyncVersion,
+        sshVersion: systemValidation.sshVersion,
+      });
     }
 
     // Check concurrent process limit
@@ -245,7 +289,7 @@ export class RsyncManager {
         devLogger.info("🚀 EXECUTING RSYNC (DEV)", {
           command: this.sanitizeArgs(args).join(" "),
           hasSpaces: sourceArg?.includes(" ") || destArg?.includes(" "),
-          host: config.sshConfig?.host,
+          host: rsyncProcess.config.sshConfig?.host,
         });
       } else {
         logger.info("🚀 EXECUTING RSYNC", {
@@ -267,12 +311,53 @@ export class RsyncManager {
 
       // Handle spawn errors immediately
       childProcess.on("error", (error) => {
+        clearTimeout(timeout);
+        rsyncProcess.status = ProcessStatus.FAILED;
+        rsyncProcess.endTime = new Date();
+
         logger.error("🚨 RSYNC SPAWN ERROR", {
           error: error.message,
           args: this.sanitizeArgs(args),
           program,
           processId,
         });
+
+        // Emit real-time error notification
+        this.eventEmitter?.emitError({
+          jobId,
+          type: "transfer",
+          message: `Failed to start rsync process: ${error.message}`,
+          details: {
+            processId,
+            errorType: "spawn_error",
+            program,
+            errorCode: (error as any).code,
+            errno: (error as any).errno,
+            syscall: (error as any).syscall,
+          },
+          timestamp: new Date().toISOString(),
+        });
+
+        // Cleanup temporary SSH key file on spawn error
+        if (rsyncProcess.tempKeyFilePath) {
+          SSHKeyManager.cleanupKeyFile(rsyncProcess.tempKeyFilePath).catch(
+            (cleanupError) => {
+              logger.warn(
+                "Failed to cleanup temporary SSH key file on spawn error",
+                {
+                  processId,
+                  keyFilePath: rsyncProcess.tempKeyFilePath,
+                  cleanupError:
+                    cleanupError instanceof Error
+                      ? cleanupError.message
+                      : "Unknown error",
+                },
+              );
+            },
+          );
+        }
+
+        reject(error);
       });
 
       let stdout = "";
@@ -309,21 +394,57 @@ export class RsyncManager {
           if (line.trim()) {
             rsyncProcess.logs.push(line);
 
-            // Parse progress
-            const progress = parser.parseProgressLine(line);
-            if (progress) {
-              rsyncProcess.progress = progress;
+            // Simple progress extraction - just look for percentage
+            const percentMatch = line.match(/(\d+)%/);
+            if (percentMatch) {
+              const percentage = parseInt(percentMatch[1], 10);
 
-              // Emit real-time progress
-              this.eventEmitter?.emitTransferProgress({
-                jobId,
+              // Extract additional info if available
+              const speedMatch = line.match(/([\d.]+[KMGT]*B\/s)/);
+              const speed = speedMatch ? speedMatch[1] : "0 B/s";
+
+              const etaMatch = line.match(/(\d+:\d+:\d+)/);
+              const eta = etaMatch ? etaMatch[1] : "0:00:00";
+
+              // Update process progress
+              rsyncProcess.progress = {
+                filename: "",
+                fileNumber: 0,
+                totalFiles: 0,
+                percentage,
+                speed,
+                eta,
+                bytesTransferred: 0,
+                totalBytes: 0,
+                elapsedTime: 0,
+              };
+
+              // Debug logging
+              if (isDevelopment) {
+                devLogger.info("📊 RSYNC PROGRESS (DEV)", {
+                  processId,
+                  percentage,
+                  speed,
+                  eta,
+                });
+              }
+
+              // Emit real-time progress with unified event system
+              this.eventEmitter?.emitUnifiedTransferProgress({
+                transferId: processId, // Use processId as transferId for now
                 fileId,
-                filename: progress.filename,
-                progress: progress.percentage,
-                speed: progress.speed,
-                eta: progress.eta,
-                bytesTransferred: progress.bytesTransferred,
-                totalBytes: progress.totalBytes,
+                jobId,
+                filename: `Transfer in progress`,
+                progress: percentage,
+                bytesTransferred: 0,
+                totalBytes: 0,
+                speed,
+                speedBps: 0, // TODO: Parse actual speed in bytes per second
+                eta,
+                etaSeconds: 0, // TODO: Parse actual ETA in seconds
+                status: 'transferring',
+                elapsedTime: Date.now() - rsyncProcess.startTime.getTime(),
+                timestamp: new Date().toISOString(),
               });
             }
 
@@ -356,6 +477,23 @@ export class RsyncManager {
           logger.error("⚠️ RSYNC STDERR", {
             processId,
             error: errorLine,
+          });
+        }
+
+        // Emit real-time error notification for critical errors
+        const errorType = this.categorizeError(errorLine);
+        if (this.isCriticalError(errorType)) {
+          this.eventEmitter?.emitError({
+            jobId,
+            type: "transfer",
+            message: `Rsync error: ${errorLine}`,
+            details: {
+              processId,
+              errorType,
+              errorCategory: this.categorizeError(errorLine),
+              isCritical: true,
+            },
+            timestamp: new Date().toISOString(),
           });
         }
 
@@ -451,6 +589,25 @@ export class RsyncManager {
               firstError: rsyncProcess.errors[0] || "No specific error",
             },
           });
+
+          // Emit comprehensive failure notification
+          this.eventEmitter?.emitError({
+            jobId,
+            type: "transfer",
+            message: `Transfer failed with exit code ${exitCode}`,
+            details: {
+              processId,
+              exitCode,
+              stderr: stderr || "No error details",
+              duration,
+              errorCount: rsyncProcess.errors.length,
+              lastError: rsyncProcess.errors[rsyncProcess.errors.length - 1],
+              firstError: rsyncProcess.errors[0],
+              args: this.sanitizeArgs(args),
+            },
+            timestamp: new Date().toISOString(),
+          });
+
           reject(
             new Error(`Rsync failed with exit code ${exitCode}: ${stderr}`),
           );
@@ -558,5 +715,15 @@ export class RsyncManager {
     }
 
     return "UNKNOWN_ERROR";
+  }
+
+  private isCriticalError(errorType: string): boolean {
+    const criticalErrors = [
+      "CONNECTION_ERROR",
+      "PERMISSION_DENIED",
+      "SSH_ERROR",
+      "RSYNC_ERROR",
+    ];
+    return criticalErrors.includes(errorType);
   }
 }

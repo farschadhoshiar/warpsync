@@ -152,6 +152,129 @@ export class TransferQueue {
   }
 
   /**
+   * Upgrade priority of an existing transfer
+   */
+  upgradePriority(transferId: string, newPriority: TransferPriority): boolean {
+    const transfer = this.queue.get(transferId);
+    if (!transfer) {
+      return false;
+    }
+
+    // Don't downgrade priority
+    if (newPriority <= transfer.priority) {
+      return false;
+    }
+
+    // Can't upgrade already transferring files
+    if (transfer.status === TransferStatus.TRANSFERRING || transfer.status === TransferStatus.STARTING) {
+      logger.info('Cannot upgrade priority of active transfer', {
+        transferId,
+        currentStatus: transfer.status,
+        currentPriority: transfer.priority,
+        requestedPriority: newPriority
+      });
+      return false;
+    }
+
+    const oldPriority = transfer.priority;
+    transfer.priority = newPriority;
+
+    logger.info('Transfer priority upgraded', {
+      transferId,
+      filename: transfer.filename,
+      oldPriority,
+      newPriority,
+      status: transfer.status
+    });
+
+    return true;
+  }
+
+  /**
+   * Find duplicate transfer by jobId and fileId
+   */
+  findDuplicateTransfer(jobId: string, fileId: string): TransferJob | null {
+    for (const transfer of this.queue.values()) {
+      if (transfer.jobId === jobId && transfer.fileId === fileId) {
+        return transfer;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Check for duplicate transfers by path
+   */
+  checkDuplicateByPath(jobId: string, relativePath: string): {
+    exists: boolean;
+    transferId?: string;
+    status?: TransferStatus;
+    canUpgrade: boolean;
+    currentPriority?: TransferPriority;
+  } {
+    for (const transfer of this.queue.values()) {
+      if (transfer.jobId === jobId && transfer.relativePath === relativePath) {
+        return {
+          exists: true,
+          transferId: transfer.id,
+          status: transfer.status,
+          canUpgrade: transfer.status === TransferStatus.QUEUED || transfer.status === TransferStatus.SCHEDULED,
+          currentPriority: transfer.priority
+        };
+      }
+    }
+    return {
+      exists: false,
+      canUpgrade: false
+    };
+  }
+
+  /**
+   * Add transfer with duplicate checking
+   */
+  async addTransferWithDuplicateCheck(
+    transfer: Omit<TransferJob, 'id' | 'createdAt' | 'status' | 'retryCount'>,
+    source: 'manual' | 'automatic' | 'scheduled'
+  ): Promise<{ transferId: string; isDuplicate: boolean; upgraded: boolean }> {
+    // Check for existing duplicate
+    const existing = this.findDuplicateTransfer(transfer.jobId, transfer.fileId);
+    
+    if (existing) {
+      logger.info('Duplicate transfer detected', {
+        existingId: existing.id,
+        existingStatus: existing.status,
+        existingPriority: existing.priority,
+        requestedPriority: transfer.priority,
+        source
+      });
+
+      // For manual requests, try to upgrade priority
+      if (source === 'manual' && transfer.priority > existing.priority) {
+        const upgraded = this.upgradePriority(existing.id, transfer.priority);
+        return {
+          transferId: existing.id,
+          isDuplicate: true,
+          upgraded
+        };
+      }
+
+      return {
+        transferId: existing.id,
+        isDuplicate: true,
+        upgraded: false
+      };
+    }
+
+    // No duplicate found, create new transfer
+    const transferId = await this.addTransfer(transfer);
+    return {
+      transferId,
+      isDuplicate: false,
+      upgraded: false
+    };
+  }
+
+  /**
    * Get transfers by filter
    */
   getTransfers(filter: TransferFilter = {}): TransferJob[] {
@@ -378,8 +501,25 @@ export class TransferQueue {
     this.activeTransfers.set(transfer.id, rsyncProcessId);
     transfer.status = TransferStatus.TRANSFERRING;
 
-    // Emit state update
+    // Emit state update to database
     this.emitFileStateUpdate(transfer, TransferStatus.QUEUED, TransferStatus.TRANSFERRING);
+
+    // Emit transfer status change
+    this.eventEmitter?.emitTransferStatus({
+      transferId: transfer.id,
+      fileId: transfer.fileId,
+      jobId: transfer.jobId,
+      filename: transfer.filename,
+      oldStatus: 'starting',
+      newStatus: 'transferring',
+      timestamp: new Date().toISOString(),
+      metadata: {
+        source: transfer.source,
+        destination: transfer.destination,
+        size: transfer.size,
+        type: transfer.type
+      }
+    });
 
     // Monitor rsync process
     this.monitorTransfer(transfer, rsyncProcessId);
@@ -399,6 +539,10 @@ export class TransferQueue {
 
       // Update progress
       if (rsyncProcess.progress) {
+        const now = new Date();
+        const elapsedTime = transfer.startedAt ? now.getTime() - transfer.startedAt.getTime() : 0;
+        
+        // Update transfer progress
         transfer.progress = {
           bytesTransferred: rsyncProcess.progress.bytesTransferred,
           totalBytes: rsyncProcess.progress.totalBytes,
@@ -406,14 +550,55 @@ export class TransferQueue {
           speed: rsyncProcess.progress.speed,
           eta: rsyncProcess.progress.eta,
           startTime: transfer.startedAt!,
-          lastUpdate: new Date()
+          lastUpdate: now
         };
+
+        // Calculate additional metrics
+        const speedBps = this.calculateSpeedBps(rsyncProcess.progress.speed);
+        const etaSeconds = this.parseEtaToSeconds(rsyncProcess.progress.eta);
+        const compressionRatio = this.calculateCompressionRatio(rsyncProcess);
+
+        // Emit unified progress event (new system)
+        this.eventEmitter?.emitUnifiedTransferProgress({
+          transferId: transfer.id,
+          fileId: transfer.fileId,
+          jobId: transfer.jobId,
+          filename: transfer.filename,
+          progress: rsyncProcess.progress.percentage,
+          bytesTransferred: rsyncProcess.progress.bytesTransferred,
+          totalBytes: rsyncProcess.progress.totalBytes,
+          speed: rsyncProcess.progress.speed,
+          speedBps,
+          eta: rsyncProcess.progress.eta,
+          etaSeconds,
+          status: 'transferring',
+          elapsedTime,
+          compressionRatio,
+          timestamp: now.toISOString()
+        });
       }
 
       // Check if completed
       if (rsyncProcess.result) {
         clearInterval(checkInterval);
         this.activeTransfers.delete(transfer.id);
+        
+        // Emit final status
+        const finalStatus = rsyncProcess.result.success ? 'completed' : 'failed';
+        this.eventEmitter?.emitTransferStatus({
+          transferId: transfer.id,
+          fileId: transfer.fileId,
+          jobId: transfer.jobId,
+          filename: transfer.filename,
+          oldStatus: 'transferring',
+          newStatus: finalStatus,
+          timestamp: new Date().toISOString(),
+          metadata: {
+            duration: rsyncProcess.result.duration,
+            exitCode: rsyncProcess.result.exitCode,
+            error: rsyncProcess.result.error
+          }
+        });
         
         if (rsyncProcess.result.success) {
           await this.handleTransferSuccess(transfer);
@@ -581,6 +766,51 @@ export class TransferQueue {
     if (cleanedCount > 0) {
       logger.debug('Cleaned up completed transfers', { count: cleanedCount });
     }
+  }
+
+  /**
+   * Calculate speed in bytes per second from human readable string
+   */
+  private calculateSpeedBps(speedStr: string): number {
+    const match = speedStr.match(/([\d.]+)\s*([KMGT]?B)\/s/i);
+    if (!match) return 0;
+
+    const value = parseFloat(match[1]);
+    const unit = match[2].toUpperCase();
+
+    const multipliers: Record<string, number> = {
+      'B': 1,
+      'KB': 1024,
+      'MB': 1024 * 1024,
+      'GB': 1024 * 1024 * 1024,
+      'TB': 1024 * 1024 * 1024 * 1024
+    };
+
+    return value * (multipliers[unit] || 1);
+  }
+
+  /**
+   * Parse ETA string to seconds
+   */
+  private parseEtaToSeconds(etaStr: string): number {
+    const match = etaStr.match(/(\d+):(\d+):(\d+)/);
+    if (!match) return 0;
+
+    const hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    const seconds = parseInt(match[3], 10);
+
+    return hours * 3600 + minutes * 60 + seconds;
+  }
+
+  /**
+   * Calculate compression ratio if available
+   */
+  private calculateCompressionRatio(rsyncProcess: any): number | undefined {
+    if (rsyncProcess.result?.stats?.compressionRatio) {
+      return rsyncProcess.result.stats.compressionRatio;
+    }
+    return undefined;
   }
 
   /**

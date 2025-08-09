@@ -52,6 +52,6 @@ coverage
 # nyc test coverage
 .nyc_output
 
-# Dependency lock files (keep package-lock.json for Docker builds)
+# Dependency lock files (keep pnpm-lock.yaml for Docker builds)
 yarn.lock
-pnpm-lock.yaml
+package-lock.json

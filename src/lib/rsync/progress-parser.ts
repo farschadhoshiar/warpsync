@@ -1,31 +1,49 @@
-import { RsyncProgress, RsyncStats } from './types';
-import { logger } from '@/lib/logger';
+import { RsyncProgress, RsyncStats } from "./types";
+import { logger } from "@/lib/logger";
 
 export class RsyncProgressParser {
-  private currentProgress: Partial<RsyncProgress> = {};
-  private stats: Partial<RsyncStats> = {};
-
   /**
-   * Parse rsync progress output line
+   * Simple progress parsing - just extract percentage from rsync output
    */
   parseProgressLine(line: string): RsyncProgress | null {
     try {
-      // Parse different types of rsync output
-      if (this.isProgressLine(line)) {
-        return this.parseProgressUpdate(line);
-      } else if (this.isFileTransferLine(line)) {
-        return this.parseFileTransfer(line);
-      } else if (this.isStatsLine(line)) {
-        this.parseStatsLine(line);
+      // Clean the line
+      const cleanLine = line.replace(/\r/g, "").trim();
+
+      // Look for percentage in the line
+      const percentMatch = cleanLine.match(/(\d+)%/);
+      if (!percentMatch) {
         return null;
       }
-      
-      return null;
+
+      const percentage = parseInt(percentMatch[1], 10);
+
+      // Extract speed if present (like "16.21MB/s")
+      const speedMatch = cleanLine.match(/([\d.]+[KMGT]*B\/s)/);
+      const speed = speedMatch ? speedMatch[1] : "0 B/s";
+
+      // Extract ETA if present (like "0:01:30")
+      const etaMatch = cleanLine.match(/(\d+:\d+:\d+)/);
+      const eta = etaMatch ? etaMatch[1] : "0:00:00";
+
+      // Extract bytes if present (like "416.29M")
+      const bytesMatch = cleanLine.match(/(\d+(?:\.\d+)?[KMGTB]*)/);
+      const bytesTransferred = bytesMatch
+        ? this.parseBytesWithUnits(bytesMatch[1])
+        : 0;
+
+      return {
+        filename: "",
+        fileNumber: 0,
+        totalFiles: 0,
+        percentage,
+        speed,
+        eta,
+        bytesTransferred,
+        totalBytes: 0,
+        elapsedTime: 0,
+      };
     } catch (error) {
-      logger.warn('Failed to parse rsync progress line', {
-        line,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
       return null;
     }
   }
@@ -35,7 +53,7 @@ export class RsyncProgressParser {
    */
   parseStats(output: string): RsyncStats | null {
     try {
-      const lines = output.split('\n');
+      const lines = output.split("\n");
       const stats: Partial<RsyncStats> = {};
 
       for (const line of lines) {
@@ -48,8 +66,8 @@ export class RsyncProgressParser {
 
       return null;
     } catch (error) {
-      logger.error('Failed to parse rsync stats', {
-        error: error instanceof Error ? error.message : 'Unknown error'
+      logger.error("Failed to parse rsync stats", {
+        error: error instanceof Error ? error.message : "Unknown error",
       });
       return null;
     }
@@ -58,99 +76,17 @@ export class RsyncProgressParser {
   /**
    * Reset parser state
    */
+  private currentProgress: Partial<RsyncProgress> = {};
+  private stats: Partial<RsyncStats> = {};
+
   reset(): void {
     this.currentProgress = {};
     this.stats = {};
   }
 
-  private isProgressLine(line: string): boolean {
-    // Match rsync progress format: "     1,234,567  78%   12.34MB/s    0:00:05"
-    return /^\s*[\d,]+\s+\d+%.*\d+:\d+:\d+/.test(line) ||
-           line.includes('to-check=') ||
-           line.includes('to-chk=');
-  }
-
-  private isFileTransferLine(line: string): boolean {
-    // Match file transfer lines with > or < indicators
-    return /^[><]/.test(line.trim()) || 
-           line.startsWith('receiving file list') ||
-           line.includes('files to consider');
-  }
-
-  private isStatsLine(line: string): boolean {
-    return line.includes('Number of files:') ||
-           line.includes('Total file size:') ||
-           line.includes('Total transferred file size:') ||
-           line.includes('Literal data:') ||
-           line.includes('Matched data:') ||
-           line.includes('File list size:') ||
-           line.includes('Total bytes sent:') ||
-           line.includes('Total bytes received:') ||
-           line.includes('sent ') && line.includes('bytes') ||
-           line.includes('received ') && line.includes('bytes');
-  }
-
-  private parseProgressUpdate(line: string): RsyncProgress | null {
-    // Parse various rsync progress formats
-    
-    // Format: "     1,234,567  78%   12.34MB/s    0:00:05 (xfr#123, to-chk=456/789)"
-    const progressMatch = line.match(/^\s*([\d,]+)\s+(\d+)%\s+([\d.]+\w+\/s)\s+(\d+:\d+:\d+)/);
-    if (progressMatch) {
-      const [, bytes, percentage, speed, timeStr] = progressMatch;
-      
-      this.currentProgress.bytesTransferred = this.parseBytes(bytes);
-      this.currentProgress.percentage = parseInt(percentage, 10);
-      this.currentProgress.speed = speed;
-      this.currentProgress.eta = timeStr;
-      
-      // Extract file transfer info if present
-      const xfrMatch = line.match(/xfr#(\d+)/);
-      if (xfrMatch) {
-        this.currentProgress.fileNumber = parseInt(xfrMatch[1], 10);
-      }
-      
-      const checkMatch = line.match(/to-chk=(\d+)\/(\d+)/);
-      if (checkMatch) {
-        const remaining = parseInt(checkMatch[1], 10);
-        const total = parseInt(checkMatch[2], 10);
-        this.currentProgress.totalFiles = total;
-        this.currentProgress.fileNumber = total - remaining;
-      }
-    }
-
-    // Format: "receiving file list ... 123 files to consider"
-    const fileListMatch = line.match(/(\d+) files to consider/);
-    if (fileListMatch) {
-      this.currentProgress.totalFiles = parseInt(fileListMatch[1], 10);
-      this.currentProgress.fileNumber = 0;
-      this.currentProgress.percentage = 0;
-    }
-
-    // Build current progress if we have enough data
-    if (this.currentProgress.percentage !== undefined) {
-      return this.buildProgress();
-    }
-
-    return null;
-  }
-
-  private parseFileTransfer(line: string): RsyncProgress | null {
-    // Parse individual file transfer lines
-    const trimmed = line.trim();
-    
-    // Format: ">f+++++++++ path/to/file"
-    const fileMatch = trimmed.match(/^[><][\w+.]+\s+(.+)$/);
-    if (fileMatch) {
-      this.currentProgress.filename = fileMatch[1];
-      return this.buildProgress();
-    }
-
-    return null;
-  }
-
   private parseStatsLine(line: string, statsObj?: Partial<RsyncStats>): void {
     const stats = statsObj || this.stats;
-    
+
     const patterns = {
       totalFiles: /Number of files:\s*([\d,]+)/,
       regularFiles: /Number of regular files transferred:\s*([\d,]+)/,
@@ -160,7 +96,7 @@ export class RsyncProgressParser {
       matchedData: /Matched data:\s*([\d,]+)/,
       listSize: /File list size:\s*([\d,]+)/,
       listGeneration: /File list generation time:\s*([\d.]+)/,
-      listTransfer: /File list transfer time:\s*([\d.]+)/
+      listTransfer: /File list transfer time:\s*([\d.]+)/,
     };
 
     for (const [key, pattern] of Object.entries(patterns)) {
@@ -191,15 +127,15 @@ export class RsyncProgressParser {
 
   private buildProgress(): RsyncProgress {
     return {
-      filename: this.currentProgress.filename || '',
+      filename: this.currentProgress.filename || "",
       fileNumber: this.currentProgress.fileNumber || 0,
       totalFiles: this.currentProgress.totalFiles || 0,
       percentage: this.currentProgress.percentage || 0,
-      speed: this.currentProgress.speed || '0 bytes/s',
-      eta: this.currentProgress.eta || '0:00:00',
+      speed: this.currentProgress.speed || "0 bytes/s",
+      eta: this.currentProgress.eta || "0:00:00",
       bytesTransferred: this.currentProgress.bytesTransferred || 0,
       totalBytes: this.currentProgress.totalBytes || 0,
-      elapsedTime: this.currentProgress.elapsedTime || 0
+      elapsedTime: this.currentProgress.elapsedTime || 0,
     };
   }
 
@@ -224,21 +160,57 @@ export class RsyncProgressParser {
       checksummedFiles: partial.checksummedFiles || 0,
       unchangedFiles: partial.unchangedFiles || 0,
       elapsedTime: partial.elapsedTime || 0,
-      transferRate: partial.transferRate || 0
+      transferRate: partial.transferRate || 0,
     };
   }
 
   private parseBytes(bytesStr: string): number {
-    return parseInt(bytesStr.replace(/,/g, ''), 10) || 0;
+    return parseInt(bytesStr.replace(/,/g, ""), 10) || 0;
+  }
+
+  private parseBytesWithUnits(bytesStr: string): number {
+    // Handle formats like "970.71M", "1.00G", "1,234,567"
+    const cleanStr = bytesStr.replace(/,/g, "");
+
+    // Check for unit suffix
+    const unitMatch = cleanStr.match(/^([\d.]+)([KMGT]?)B?$/);
+    if (unitMatch) {
+      const [, numberStr, unit] = unitMatch;
+      const number = parseFloat(numberStr);
+
+      switch (unit.toUpperCase()) {
+        case "K":
+          return Math.round(number * 1024);
+        case "M":
+          return Math.round(number * 1024 * 1024);
+        case "G":
+          return Math.round(number * 1024 * 1024 * 1024);
+        case "T":
+          return Math.round(number * 1024 * 1024 * 1024 * 1024);
+        default:
+          return Math.round(number);
+      }
+    }
+
+    // Fallback to plain number parsing
+    return parseInt(cleanStr, 10) || 0;
   }
 
   private parseNumber(numStr: string): number {
-    return parseInt(numStr.replace(/,/g, ''), 10) || 0;
+    return parseInt(numStr.replace(/,/g, ""), 10) || 0;
   }
 
   private calculateCompressionRatio(stats: Partial<RsyncStats>): number {
-    if (stats.literalData && stats.totalTransferred && stats.totalTransferred > 0) {
-      return ((stats.totalTransferred - stats.literalData) / stats.totalTransferred) * 100;
+    if (
+      stats.literalData &&
+      stats.totalTransferred &&
+      stats.totalTransferred > 0
+    ) {
+      return (
+        ((stats.totalTransferred - stats.literalData) /
+          stats.totalTransferred) *
+        100
+      );
     }
     return 0;
   }

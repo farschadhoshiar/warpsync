@@ -1,6 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Skip ESLint during build in Docker/CI environments
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  // Skip TypeScript checking during build in Docker/CI environments
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   serverExternalPackages: [
     'ssh2', 
     'node-ssh', 

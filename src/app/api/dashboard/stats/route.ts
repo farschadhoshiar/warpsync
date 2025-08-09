@@ -78,19 +78,9 @@ export const GET = withErrorHandler(async () => {
       },
       timestamp: new Date().toISOString()
     };
+    
 
-    timer.end({
-      totalServers,
-      activeServers,
-      totalJobs,
-      activeTransfers: queueStats.active
-    });
 
-    logger.info('Dashboard statistics retrieved successfully', {
-      servers: `${activeServers}/${totalServers}`,
-      jobs: `${activeJobs}/${totalJobs}`,
-      transfers: queueStats.active
-    });
 
     return createSuccessResponse(dashboardStats);
 

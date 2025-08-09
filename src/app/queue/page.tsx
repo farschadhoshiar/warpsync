@@ -1,27 +1,74 @@
 "use client";
 
-import { Card, CardContent } from '@/components/ui/card';
-import { Activity } from 'lucide-react';
+import { useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { JobSelector } from "@/components/jobs/job-selector";
+import { FileFilters } from "@/components/jobs/file-filters";
+import { FileBrowser } from "@/components/jobs/file-browser";
+import { EmptyState } from "@/components/jobs/empty-state";
+import { WebSocketProvider } from "@/components/providers/websocket-provider";
+import { useJobs } from "@/hooks/useJobs";
 
 export default function QueuePage() {
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Transfer Queue</h1>
-        <p className="text-muted-foreground">
-          Manage and monitor file transfer queue
-        </p>
-      </div>
+  const [selectedJobId, setSelectedJobId] = useState<string>("all");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [syncState, setSyncState] = useState("queued"); // Default to queued for queue page
+  const [sortBy, setSortBy] = useState("path");
+  const [pathFilter, setPathFilter] = useState("");
 
+  const { jobs } = useJobs();
+
+  const selectedJob =
+    selectedJobId === "all"
+      ? null
+      : jobs?.find((job) => job._id === selectedJobId);
+
+  const handleReset = () => {
+    setSearchTerm("");
+    setSyncState("queued"); // Reset to queued for queue page
+    setSortBy("path");
+    setPathFilter("");
+  };
+
+  return (
+    <div className="p-6 space-y-8">
       <Card>
-        <CardContent className="flex flex-col items-center justify-center py-12">
-          <Activity className="h-12 w-12 text-muted-foreground mb-4" />
-          <h3 className="text-lg font-semibold mb-2">Queue is empty</h3>
-          <p className="text-muted-foreground text-center">
-            No files are currently queued for transfer
-          </p>
+        <CardHeader>
+          <CardTitle>Queue Management</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <label className="text-sm font-medium mb-2 block">Select Job</label>
+            <JobSelector
+              value={selectedJobId}
+              onValueChange={setSelectedJobId}
+            />
+          </div>
+          <FileFilters
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            syncState={syncState}
+            onSyncStateChange={setSyncState}
+            sortBy={sortBy}
+            onSortByChange={setSortBy}
+            pathFilter={pathFilter}
+            onPathFilterChange={setPathFilter}
+            onReset={handleReset}
+          />
         </CardContent>
       </Card>
+
+      {/* ✅ Wrap FileBrowser with job-specific WebSocketProvider */}
+      <WebSocketProvider jobId={selectedJobId} key={selectedJobId}>
+        <FileBrowser
+          jobId={selectedJobId}
+          searchTerm={searchTerm}
+          syncState={syncState}
+          sortBy={sortBy}
+          pathFilter={pathFilter}
+          jobs={jobs || []}
+        />
+      </WebSocketProvider>
     </div>
   );
 }

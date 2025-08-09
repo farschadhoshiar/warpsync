@@ -89,24 +89,6 @@ export class RsyncCommandBuilder {
   }
 
   /**
-   * Sanitize command for logging (remove sensitive info)
-   * @deprecated Use sanitizeArgs instead
-   */
-  private static sanitizeCommand(command: string): string {
-    return command.replace(/(-i\s+)[^\s]+/g, "$1[PRIVATE_KEY_FILE]");
-  }
-
-  /**
-   * Build complete rsync command with SSH configuration (legacy method)
-   * @deprecated Use buildCommandWithKeyFile instead
-   */
-  static buildCommand(config: RsyncConfig): string {
-    throw new Error(
-      "buildCommand is deprecated. Use buildCommandWithKeyFile for SSH key support.",
-    );
-  }
-
-  /**
    * Validate rsync configuration
    */
   static validateConfig(config: RsyncConfig): {

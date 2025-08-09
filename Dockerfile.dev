@@ -9,14 +9,17 @@ RUN apk add --no-cache \
     curl \
     git
 
+# Install pnpm globally
+RUN npm install -g pnpm
+
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy package.json and package-lock.json (if available)
-COPY package*.json ./
+# Copy package.json and pnpm-lock.yaml
+COPY package.json pnpm-lock.yaml ./
 
 # Install dependencies (including dev dependencies for development)
-RUN npm install
+RUN pnpm install --frozen-lockfile
 
 # Create necessary directories
 RUN mkdir -p /app/data/local /app/data/remote /app/logs
@@ -36,4 +39,4 @@ EXPOSE 3000
 ENV NODE_ENV=development
 
 # Start the development server with hot reload
-CMD ["npm", "run", "dev"]
+CMD ["pnpm", "run", "dev"]
